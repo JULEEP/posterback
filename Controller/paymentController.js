@@ -1,41 +1,48 @@
-import { StandardCheckoutClient, Env, StandardCheckoutPayRequest } from 'pg-sdk-node';
+import {
+  StandardCheckoutClient,
+  Env,
+  StandardCheckoutPayRequest
+} from 'pg-sdk-node';
+
 import Plan from '../Models/Plan.js';
-import User from '../Models/User.js'; // assuming user model for subscription update
-import { randomUUID } from 'crypto';
+import User from '../Models/User.js';
 import Payment from '../Models/Payment.js';
+import { v4 as uuidv4 } from 'uuid';
 
-
-// Init PhonePe SDK client
+// ✅ Init: PhonePe client with production keys
 const client = StandardCheckoutClient.getInstance(
-  "TEST-M22HFU8UDDBYR_25051", // Merchant ID
-  "MjcxNTAxYjAtZjA1Ny00YmQwLTg3YTktMGIyOTNmMjIzNmMz", // Salt Key
-  1, // Salt Index
-  Env.SANDBOX // or Env.PROD
+  "SU2505151313203753742541", // ✅ Live Merchant ID
+  "645047c3-c1f7-4157-9d01-1a07c84e4372", // ✅ Live Salt Key
+  1, // ✅ Salt Index
+  Env.PROD // ✅ Live Mode
 );
 
 export const payWithPhonePe = async (req, res) => {
   try {
     const { userId, planId } = req.body;
 
+    // Validate user
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    // Validate plan
     const plan = await Plan.findById(planId);
     if (!plan) return res.status(404).json({ message: "Plan not found" });
 
+    // Prepare payment info
     const amount = plan.offerPrice * 100; // in paise
-    const merchantOrderId = `txn_${randomUUID()}`;
+    const merchantOrderId = `txn_${uuidv4()}`;
 
-    // Build payment request using SDK
+    // ✅ Build the payment request — without .merchantId()
     const request = StandardCheckoutPayRequest.builder()
       .merchantOrderId(merchantOrderId)
       .amount(amount)
       .build();
 
-    // Send payment request
+    // ✅ Make the payment request
     const response = await client.pay(request);
 
-    // ✅ Save payment to DB
+    // Save payment to DB
     await Payment.create({
       merchantOrderId,
       userId: user._id,
@@ -46,19 +53,34 @@ export const payWithPhonePe = async (req, res) => {
       paymentResponse: response,
     });
 
-    // ✅ Send response including user and plan details
+    // Format dates
+    const formatDate = (date) => {
+      const d = new Date(date);
+      return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+    };
+
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setFullYear(endDate.getFullYear() + 1);
+
+    // Final success response
     res.status(200).json({
       success: true,
       message: "Payment initiated",
       merchantOrderId,
-      response, // keep full PhonePe SDK response
+      response,
       amount,
       currency: "INR",
       plan: {
         id: plan._id,
         name: plan.name,
-        price: plan.price,
+        originalPrice: plan.originalPrice,
         offerPrice: plan.offerPrice,
+        discountPercentage: plan.discountPercentage,
+        duration: plan.duration,
+        startDate: formatDate(startDate),
+        endDate: formatDate(endDate),
+        isPurchasedPlan: true,
       },
       user: {
         id: user._id,
@@ -69,14 +91,15 @@ export const payWithPhonePe = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("PhonePe SDK error:", error);
+    console.error("❌ PhonePe SDK error:", error);
     res.status(500).json({
       success: false,
       message: "PhonePe payment error",
-      error: error.message,
+      error: error.message || "Something went wrong",
     });
   }
 };
+
 // ✅ 2. Handle Payment Callback
 export const phonePeCallbackHandler = async (req, res) => {
   try {

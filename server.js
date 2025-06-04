@@ -32,7 +32,7 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://posterbnaoadmin.vercel.app', 'http://194.164.148.244:3000'],
+  origin: ['http://localhost:3000', 'https://posterbnaoadmin.vercel.app', 'http://194.164.148.244:3000', 'http://194.164.148.244:3079'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
@@ -86,7 +86,7 @@ app.use(fileUpload({
 app.get("/", (req, res) => {
     res.json({
         status: "success",    // A key to indicate the response status
-        message: "Welcome to our service!", // Static message
+        message: "Welcome to our poser bnao service!", // Static message
     });
 });
 
@@ -112,8 +112,9 @@ app.use('/api/payment', paymentRoutes); // So your route becomes /api/payment/ph
 
 
 
-// Start the server
-const port = process.env.PORT || 6000;
-server.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
+const port = process.env.PORT || 6002;
+
+app.listen(port, '0.0.0.0', () => {
+console.log(`🚀 Server is up and running at: http://localhost:${port}`);
 });
+

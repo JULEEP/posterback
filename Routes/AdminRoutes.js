@@ -22,6 +22,7 @@ import {
     getAdminProfile,
     logoutAdmin,
     deleteUser,
+    updateAdminProfile,
 } from "../Controller/AdminController.js";
 
 const router = express.Router();
@@ -47,6 +48,7 @@ router.delete('/deletebusinesscard/:businessCardId', deleteBusinessCard);
 router.post('/register', registerAdmin);
 router.post('/login', loginAdmin);
 router.get('/profile/:adminId', getAdminProfile);
+router.put('/updateprofile/:adminId', updateAdminProfile);
 router.post('/logout', logoutAdmin);
 
 

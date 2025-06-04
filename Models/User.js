@@ -75,8 +75,15 @@ referralPoints: {
       duration: String,
       startDate: Date,
       endDate: Date,
+      isPurchasedPlan: { type: Boolean, default: false }, // ✅ default false
+
     },
   ],
+    // ✅ Wallet for referral rewards
+  wallet: {
+    type: Number,
+    default: 0,
+  },
   myBookings: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Order'

@@ -24,7 +24,7 @@ const router = express.Router();
 
 router.post('/create-poster', createPoster);
 router.post('/create-canvaposter', canvasCreatePoster);
-router.put('/update/:posterId', updatePoster);
+router.put('/update/:id', updatePoster);
 router.get('/getallposter', getAllPosters); 
 router.put('/editposter/:posterId', editPoster);
 router.delete('/deleteposter/:posterId', deletePoster);

@@ -4,28 +4,51 @@ const PosterCanvasSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: true,
+      trim: true
+    },
+    email: {
+      type: String,
+      trim: true
+    },
+    mobile: {
+      type: String,
+      trim: true
+    },
+    title: {
+      type: String,
+      trim: true
+    },
+    textSettings: {
+      type: mongoose.Schema.Types.Mixed,  // To store the JSON for text settings
+      default: {}
+    },
+    overlaySettings: {
+      type: mongoose.Schema.Types.Mixed,  // To store the JSON for overlay settings
+      default: {}
+    },
+    images: {
+      type: [String],
+      default: []
+    },
+    backgroundImage: {
+      type: String,  // New field to store background image URL
       trim: true
     },
     categoryName: {
       type: String,
-      required: true
+      trim: true
     },
     price: {
-      type: Number,
-      required: true
+      type: Number
     },
     description: {
-      type: String,
-      required: true
+      type: String
     },
     size: {
-      type: String,
-      required: true
+      type: String
     },
     festivalDate: {
-      type: Date,
-      required: false
+      type: Date
     },
     inStock: {
       type: Boolean,
@@ -34,18 +57,6 @@ const PosterCanvasSchema = new mongoose.Schema(
     tags: {
       type: [String],
       default: []
-    },
-    email: {
-      type: String,
-      required: false
-    },
-    mobile: {
-      type: String,
-      required: false
-    },
-    images: {
-      type: [String],
-      required: true
     }
   },
   {
@@ -53,7 +64,6 @@ const PosterCanvasSchema = new mongoose.Schema(
   }
 );
 
-// Assign to a variable before exporting
 const PosterCanvas = mongoose.model('PosterCanvas', PosterCanvasSchema);
 
 export default PosterCanvas;

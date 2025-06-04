@@ -74,7 +74,6 @@ const generateReferralCode = () => {
   return code;
 };
 
-// User Registration Controller
 export const registerUser = async (req, res) => {
   try {
     const {
@@ -83,21 +82,21 @@ export const registerUser = async (req, res) => {
       mobile,
       dob,
       marriageAnniversaryDate,
-      referralCode: enteredCode, // optional input field
+      referralCode: enteredCode,
     } = req.body;
 
-    // ✅ Basic validation
+    // Validation
     if (!name || !mobile || !dob) {
       return res.status(400).json({ message: 'Name, Mobile, and Date of Birth are required!' });
     }
 
-    // ✅ Prevent duplicate email or mobile
+    // Check duplicate
     const userExist = await User.findOne({ $or: [{ email }, { mobile }] });
     if (userExist) {
       return res.status(400).json({ message: 'User with this email or mobile already exists!' });
     }
 
-    // ✅ Generate a unique referral code for this new user
+    // Generate unique referral code
     let newReferralCode;
     let codeExists = true;
     while (codeExists) {
@@ -106,7 +105,7 @@ export const registerUser = async (req, res) => {
       if (!existingCode) codeExists = false;
     }
 
-    // ✅ Prepare new user data
+    // Prepare user
     const newUser = new User({
       name,
       email,
@@ -116,26 +115,25 @@ export const registerUser = async (req, res) => {
       referralCode: newReferralCode,
     });
 
-    // ✅ Handle referral reward if a code was entered
+    // ✅ Referral reward logic
     if (enteredCode) {
       const referrer = await User.findOne({ referralCode: enteredCode.toUpperCase() });
       if (referrer) {
-        referrer.referralPoints += 10; // reward
+        referrer.wallet = (referrer.wallet || 0) + 100;
         await referrer.save();
+
+        newUser.referredBy = referrer._id; // track reference
       } else {
         return res.status(400).json({ message: 'Invalid referral code!' });
       }
     }
 
-    // ✅ Save the new user
     await newUser.save();
 
-    // ✅ Issue JWT token
     const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET_KEY, {
       expiresIn: '1h',
     });
 
-    // ✅ Respond with success
     return res.status(201).json({
       message: 'Registration successful',
       token,
@@ -147,7 +145,7 @@ export const registerUser = async (req, res) => {
         dob: newUser.dob,
         marriageAnniversaryDate: newUser.marriageAnniversaryDate,
         referralCode: newUser.referralCode,
-        referralPoints: newUser.referralPoints,
+        wallet: newUser.wallet,
         createdAt: newUser.createdAt,
         updatedAt: newUser.updatedAt,
       },
@@ -862,7 +860,7 @@ export const purchasePlan = async (req, res) => {
 
 
 
-// Controller to get user's subscribed plans
+// Controller to get user's subscribed plans (detailed response)
 export const getSubscribedPlan = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -870,24 +868,67 @@ export const getSubscribedPlan = async (req, res) => {
     // Check if user exists
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ success: false, message: 'User not found' });
     }
 
     // Check if user has any subscribed plans
     if (!user.subscribedPlans || user.subscribedPlans.length === 0) {
-      return res.status(404).json({ message: 'No subscribed plans found' });
+      return res.status(404).json({ success: false, message: 'No subscribed plans found' });
     }
 
-    // Respond with the user's subscribed plans details
+    // Format date helper
+    const formatDate = (date) => {
+      const d = new Date(date);
+      return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
+    };
+
+    // Prepare detailed subscribed plans
+    const detailedPlans = await Promise.all(
+      user.subscribedPlans.map(async (planEntry) => {
+        const plan = await Plan.findById(planEntry.planId);
+        if (!plan) return null; // Plan not found, skip
+        const startDate = new Date(planEntry.startDate);
+        const endDate = new Date(planEntry.endDate);
+
+        return {
+          id: plan._id,
+          name: plan.name,
+          originalPrice: plan.originalPrice,
+          offerPrice: plan.offerPrice,
+          discountPercentage: plan.discountPercentage,
+          duration: plan.duration,
+          startDate: formatDate(startDate),
+          endDate: formatDate(endDate),
+          isPurchasedPlan: true,
+        };
+      })
+    );
+
+    // Remove null entries
+    const subscribedPlans = detailedPlans.filter((p) => p !== null);
+
+    // Send final response
     res.status(200).json({
+      success: true,
       message: 'Subscribed plans fetched successfully',
-      subscribedPlans: user.subscribedPlans,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      },
+      subscribedPlans,
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error fetching subscribed plans' });
+    console.error('Error fetching subscribed plans:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching subscribed plans',
+      error: error.message,
+    });
   }
 };
+
 
 
 
@@ -1409,4 +1450,26 @@ export const getReferralCodeByUserId = async (req, res) => {
     return res.status(500).json({ message: 'Something went wrong.' });
   }
 };
+
+
+
+export const getUserWallet = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    return res.status(200).json({
+      wallet: user.wallet || 0,
+    });
+  } catch (error) {
+    console.error('Error fetching wallet balance:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
 

@@ -639,6 +639,36 @@ export const getAdminProfile = async (req, res) => {
 };
 
 
+
+
+// ✏️ Update Admin Profile
+export const updateAdminProfile = async (req, res) => {
+  const { adminId } = req.params; // Extract adminId from params
+  const updates = req.body; // Fields to update (name, email, etc.)
+
+  try {
+    // Prevent password update here unless handled separately
+    if (updates.password) {
+      return res.status(400).json({ error: "Password cannot be updated from this route." });
+    }
+
+    const updatedAdmin = await Admin.findByIdAndUpdate(
+      adminId,
+      { $set: updates },
+      { new: true, runValidators: true, select: "-password" } // exclude password from response
+    );
+
+    if (!updatedAdmin) {
+      return res.status(404).json({ error: "Admin not found" });
+    }
+
+    res.status(200).json({ message: "Admin profile updated successfully", admin: updatedAdmin });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update profile", details: err.message });
+  }
+};
+
+
 // 🔑 Logout Admin (Cookie version)
 export const logoutAdmin = (req, res) => {
   try {

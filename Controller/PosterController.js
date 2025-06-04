@@ -73,8 +73,8 @@ export const createPoster = async (req, res) => {
 
 
 export const updatePoster = async (req, res) => {
- try {
-    const { posterId } = req.params;
+  try {
+    const { id } = req.params;
     const {
       name,
       categoryName,
@@ -86,121 +86,80 @@ export const updatePoster = async (req, res) => {
       tags,
       email,
       mobile,
+      title,
       textSettings,
-      logoSettings
+      overlaySettings
     } = req.body;
 
-    const poster = await PosterCanvas.findById(posterId);
-    if (!poster) return res.status(404).json({ message: 'Poster not found' });
-
-    if (!req.files || !req.files.images) {
-      return res.status(400).json({ message: 'No image uploaded to regenerate poster' });
+    const poster = await Poster.findById(id);
+    if (!poster) {
+      return res.status(404).json({ message: 'Poster not found' });
     }
 
-    const files = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
-    const bgImage = await loadImage(files[0].tempFilePath);
-    const canvas = createCanvas(bgImage.width, bgImage.height);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bgImage, 0, 0);
-
-    // Parse optional JSON strings
-    let customTextSettings = {};
-    let customLogoSettings = {};
-    try {
-      if (textSettings) customTextSettings = JSON.parse(textSettings);
-    } catch (err) {
-      return res.status(400).json({ message: 'Invalid JSON in textSettings' });
-    }
-
-    try {
-      if (logoSettings) customLogoSettings = JSON.parse(logoSettings);
-    } catch (err) {
-      return res.status(400).json({ message: 'Invalid JSON in logoSettings' });
-    }
-
-    const defaultTextSettings = {
-      name: { position: { dx: canvas.width / 2, dy: 100 }, font: 'bold 30px Arial', color: 'blue' },
-      description: { position: { dx: canvas.width / 2, dy: 160 }, font: '24px Arial', color: 'purple' },
-      email: { position: { dx: canvas.width / 2, dy: 220 }, font: '20px Arial', color: 'blue' },
-      mobile: { position: { dx: canvas.width / 2, dy: 260 }, font: '20px Arial', color: 'green' }
-    };
-
-    const textItems = [
-      { key: 'name', value: name },
-      { key: 'description', value: description },
-      email && { key: 'email', value: email },
-      mobile && { key: 'mobile', value: mobile }
-    ].filter(Boolean);
-
-    textItems.forEach(({ key, value }) => {
-      const settings = customTextSettings[key] || defaultTextSettings[key];
-      const { position, font, color } = settings;
-      ctx.font = font || '20px Arial';
-      ctx.fillStyle = color || 'black';
-      ctx.textAlign = 'center';
-      ctx.fillText(value, position?.dx || canvas.width / 2, position?.dy || 100);
-    });
-
-    // Optional logo drawing
-    if (req.files.logo) {
-      const logoFile = Array.isArray(req.files.logo) ? req.files.logo[0] : req.files.logo;
-      const logoImage = await loadImage(logoFile.tempFilePath);
-
-      const {
-        dx = canvas.width - 120,
-        dy = 20,
-        size = 100,
-        shape = 'circle'
-      } = customLogoSettings;
-
-      ctx.save();
-      if (shape === 'circle') {
-        ctx.beginPath();
-        ctx.arc(dx + size / 2, dy + size / 2, size / 2, 0, Math.PI * 2);
-        ctx.clip();
-      }
-
-      ctx.drawImage(logoImage, dx, dy, size, size);
-      ctx.restore();
-    }
-
-    // Upload updated image to Cloudinary
-    const imageBuffer = canvas.toBuffer('image/png');
-    cloudinary.uploader.upload_stream({ folder: 'posters' }, async (error, result) => {
-      if (error) {
-        return res.status(500).json({ message: 'Cloudinary upload failed', error: error.message });
-      }
-
-      // Update fields
-      poster.name = name || poster.name;
-      poster.categoryName = categoryName || poster.categoryName;
-      poster.price = price || poster.price;
-      poster.description = description || poster.description;
-      poster.size = size || poster.size;
-      poster.festivalDate = festivalDate || poster.festivalDate;
-      poster.inStock = inStock !== undefined ? inStock : poster.inStock;
-      poster.email = email || poster.email;
-      poster.mobile = mobile || poster.mobile;
-      poster.tags = tags ? tags.split(',') : poster.tags;
-
-      // Overwrite images with new generated one
-      poster.images = [result.secure_url];
-
-      const updatedPoster = await poster.save();
-
-      res.status(200).json({
-        message: 'Poster updated successfully',
-        poster: updatedPoster
+    // Handle background image upload (optional)
+    if (req.files && req.files.bgImage) {
+      const bgFile = Array.isArray(req.files.bgImage) ? req.files.bgImage[0] : req.files.bgImage;
+      const bgUploadResult = await cloudinary.uploader.upload(bgFile.tempFilePath, {
+        folder: 'posters/backgrounds'
       });
-    }).end(imageBuffer);
-  } catch (error) {
-    console.error('❌ Error updating poster:', error);
-    res.status(500).json({
-      message: 'Error updating poster',
-      error: error.message
+      poster.backgroundImage = bgUploadResult.secure_url;
+    }
+
+    // Handle overlay images upload (optional)
+    if (req.files && req.files.images) {
+      const overlayImages = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
+      const uploadedOverlayUrls = [];
+      for (const imgFile of overlayImages) {
+        const result = await cloudinary.uploader.upload(imgFile.tempFilePath, {
+          folder: 'posters/overlays'
+        });
+        uploadedOverlayUrls.push(result.secure_url);
+      }
+      poster.images = uploadedOverlayUrls;
+    }
+
+    // Update other fields if provided
+    if (name !== undefined) poster.name = name;
+    if (categoryName !== undefined) poster.categoryName = categoryName;
+    if (price !== undefined) poster.price = price;
+    if (description !== undefined) poster.description = description;
+    if (size !== undefined) poster.size = size;
+    if (festivalDate !== undefined) poster.festivalDate = festivalDate;
+    if (inStock !== undefined) poster.inStock = inStock;
+    if (tags !== undefined) poster.tags = typeof tags === 'string' ? tags.split(',').map(t => t.trim()) : tags;
+    if (email !== undefined) poster.email = email;
+    if (mobile !== undefined) poster.mobile = mobile;
+    if (title !== undefined) poster.title = title;
+
+    if (textSettings) {
+      try {
+        poster.textSettings = JSON.parse(textSettings);
+      } catch {
+        return res.status(400).json({ message: 'Invalid JSON in textSettings' });
+      }
+    }
+
+    if (overlaySettings) {
+      try {
+        poster.overlaySettings = JSON.parse(overlaySettings);
+      } catch {
+        return res.status(400).json({ message: 'Invalid JSON in overlaySettings' });
+      }
+    }
+
+    await poster.save();
+
+    res.status(200).json({
+      message: 'Poster updated successfully',
+      poster
     });
+
+  } catch (error) {
+    console.error('Error updating poster:', error);
+    res.status(500).json({ message: 'Error updating poster', error: error.message });
   }
 };
+
 
 
 
@@ -562,130 +521,76 @@ export const canvasCreatePoster = async (req, res) => {
       tags,
       email,
       mobile,
-      textSettings,   // JSON string
-      logoSettings    // JSON string
+      title,
+      textSettings,
+      overlaySettings
     } = req.body;
 
-    if (!req.files || !req.files.images) {
-      return res.status(400).json({ message: 'No poster image uploaded' });
+    // Check for background image
+    if (!req.files || !req.files.bgImage) {
+      return res.status(400).json({ message: 'Background image is required' });
     }
 
-    const files = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
-    const bgImage = await loadImage(files[0].tempFilePath);
-    const canvas = createCanvas(bgImage.width, bgImage.height);
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(bgImage, 0, 0);
+    // Upload background image
+    const bgFile = Array.isArray(req.files.bgImage) ? req.files.bgImage[0] : req.files.bgImage;
+    const bgUploadResult = await cloudinary.uploader.upload(bgFile.tempFilePath, {
+      folder: 'posters/backgrounds'
+    });
+    const bgImageUrl = bgUploadResult.secure_url;
 
-    // Parse text settings
-    let customTextSettings = {};
-    try {
-      if (textSettings) {
-        customTextSettings = JSON.parse(textSettings);
-      }
-    } catch (err) {
-      return res.status(400).json({ message: 'Invalid JSON in textSettings' });
+    // Upload overlay images (optional)
+    let overlayImages = [];
+    if (req.files.images) {
+      overlayImages = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
     }
 
-    // Parse logo settings
-    let customLogoSettings = {};
-    try {
-      if (logoSettings) {
-        customLogoSettings = JSON.parse(logoSettings);
-      }
-    } catch (err) {
-      return res.status(400).json({ message: 'Invalid JSON in logoSettings' });
+    const uploadedOverlayUrls = [];
+    for (const imgFile of overlayImages) {
+      const result = await cloudinary.uploader.upload(imgFile.tempFilePath, {
+        folder: 'posters/overlays'
+      });
+      uploadedOverlayUrls.push(result.secure_url);
     }
 
-    // Default text settings
-    const defaultTextSettings = {
-      name: { position: { dx: canvas.width / 2, dy: 100 }, font: 'bold 30px Arial', color: 'blue' },
-      description: { position: { dx: canvas.width / 2, dy: 160 }, font: '24px Arial', color: 'purple' },
-      email: { position: { dx: canvas.width / 2, dy: 220 }, font: '20px Arial', color: 'blue' },
-      mobile: { position: { dx: canvas.width / 2, dy: 260 }, font: '20px Arial', color: 'green' }
-    };
-
-    const textItems = [
-      { key: 'name', value: name },
-      { key: 'description', value: description },
-      email && { key: 'email', value: email },
-      mobile && { key: 'mobile', value: mobile }
-    ].filter(Boolean);
-
-    // Render text
-    textItems.forEach(({ key, value }) => {
-      const settings = customTextSettings[key] || defaultTextSettings[key];
-      const { position, font, color } = settings;
-      ctx.font = font || '20px Arial';
-      ctx.fillStyle = color || 'black';
-      ctx.textAlign = 'center';
-      ctx.fillText(value, position?.dx || canvas.width / 2, position?.dy || 100);
+    // Create new poster
+    const newPoster = new Poster({
+      name,
+      categoryName,
+      price,
+      description,
+      size,
+      festivalDate,
+      inStock,
+      tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
+      email,
+      mobile,
+      title,
+      textSettings: textSettings ? JSON.parse(textSettings) : {},
+      overlaySettings: overlaySettings ? JSON.parse(overlaySettings) : {},
+      images: uploadedOverlayUrls,
+      backgroundImage: bgImageUrl
     });
 
-    // Render logo
-    if (req.files.logo) {
-      const logoFile = Array.isArray(req.files.logo) ? req.files.logo[0] : req.files.logo;
-      const logoImage = await loadImage(logoFile.tempFilePath);
+    await newPoster.save();
 
-      const {
-        dx = canvas.width - 120,
-        dy = 20,
-        size = 100,
-        shape = 'circle' // circle or square
-      } = customLogoSettings;
+    res.status(201).json({
+      message: 'Poster created successfully',
+      poster: newPoster
+    });
 
-      ctx.save();
-      if (shape === 'circle') {
-        ctx.beginPath();
-        ctx.arc(dx + size / 2, dy + size / 2, size / 2, 0, Math.PI * 2);
-        ctx.clip();
-      }
-
-      ctx.drawImage(logoImage, dx, dy, size, size);
-      ctx.restore();
-    }
-
-    // Upload to Cloudinary
-    const imageBuffer = canvas.toBuffer('image/png');
-    cloudinary.uploader.upload_stream({ folder: 'posters' }, async (error, result) => {
-      if (error) {
-        return res.status(500).json({ message: 'Cloudinary upload failed', error: error.message });
-      }
-
-      const newPoster = new PosterCanvas({
-        name,
-        categoryName,
-        price,
-        images: [result.secure_url],
-        description,
-        size,
-        festivalDate,
-        inStock,
-        email,
-        mobile,
-        tags: tags ? tags.split(',') : []
-      });
-
-      await newPoster.save();
-
-      res.status(201).json({
-        message: 'Poster created successfully',
-        poster: newPoster
-      });
-    }).end(imageBuffer);
   } catch (error) {
-    console.error('❌ Error creating poster:', error);
-    res.status(500).json({
-      message: 'Error creating poster',
-      error: error.message
-    });
+    console.error('Error creating poster:', error);
+    res.status(500).json({ message: 'Error creating poster', error: error.message });
   }
 };
 
 
 
+
+
 export const getAllCanvasPosters = async (req, res) => {
   try {
-    const posters = await PosterCanvas.find().sort({ createdAt: -1 }); // newest first
+    const posters = await Poster.find().sort({ createdAt: -1 }); // newest first
     res.status(200).json({
       message: 'All canvas posters fetched successfully',
       posters,
@@ -698,11 +603,12 @@ export const getAllCanvasPosters = async (req, res) => {
 
 
 
+
 export const getSingleCanvasPoster = async (req, res) => {
   try {
     const { posterId } = req.params;
 
-    const poster = await PosterCanvas.findById(posterId);
+    const poster = await Poster.findById(posterId);
 
     if (!poster) {
       return res.status(404).json({ message: 'Poster not found' });

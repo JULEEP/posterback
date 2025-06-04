@@ -27,10 +27,10 @@ const posterSchema = new mongoose.Schema({
     enum: ['A3', 'A4', 'A5', 'Custom'],
     default: 'A4'
   },
-festivalDate: {
-  type: String,
-  default: null
-},
+  festivalDate: {
+    type: String,
+    default: null
+  },
   inStock: {
     type: Boolean,
     default: true
@@ -38,6 +38,30 @@ festivalDate: {
   tags: {
     type: [String],
     default: []
+  },
+  email: {
+    type: String,
+    trim: true
+  },
+  mobile: {
+    type: String,
+    trim: true
+  },
+  title: {
+    type: String,
+    trim: true
+  },
+  textSettings: {
+    type: mongoose.Schema.Types.Mixed,  // To store the JSON for text settings
+    default: {}
+  },
+  overlaySettings: {
+    type: mongoose.Schema.Types.Mixed,  // To store the JSON for overlay settings
+    default: {}
+  },
+  backgroundImage: {
+    type: String,  // To store background image URL
+    trim: true
   },
   createdAt: {
     type: Date,
@@ -48,7 +72,6 @@ festivalDate: {
     default: Date.now
   }
 });
-
 
 const Poster = mongoose.model('Poster', posterSchema);
 

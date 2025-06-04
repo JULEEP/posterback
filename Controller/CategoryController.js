@@ -2,40 +2,20 @@ import Category from "../Models/Category.js";
 import cloudinary from "../config/cloudinary.js";
 export const createCategory = async (req, res) => {
   try {
-    const { categoryName, subCategoryName } = req.body;
-
-    // Check required fields
-    if (!categoryName || !subCategoryName) {
-      return res.status(400).json({ message: "Category and Subcategory are required" });
-    }
+    const { categoryName } = req.body;
 
     // Check if category + subcategory already exists
     const existingCategory = await Category.findOne({ 
       categoryName, 
-      subCategoryName 
     });
 
     if (existingCategory) {
       return res.status(400).json({ message: "This category with the given subcategory already exists" });
     }
 
-    // Validate image presence
-    if (!req.files || !req.files.image) {
-      return res.status(400).json({ message: "Image is required" });
-    }
-
-    const file = req.files.image;
-
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: 'category',
-    });
-
     // Create new category
     const category = new Category({
       categoryName,
-      subCategoryName,
-      image: result.secure_url,
     });
 
     await category.save();
