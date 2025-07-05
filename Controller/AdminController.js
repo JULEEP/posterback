@@ -9,6 +9,11 @@ import Admin from "../Models/Admin.js";
 import generateToken from "../config/jwtToken.js";
 import Plan from "../Models/Plan.js";
 import cloudinary from "../config/cloudinary.js";
+import Poster from "../Models/Poster.js";
+import Category from '../Models/Category.js'
+import Banner from '../Models/Banner.js'
+
+
 
 // User Controller (GET All Users)
 export const getAllUsers = async (req, res) => {
@@ -146,6 +151,49 @@ export const createOrUpdatePrivacyPolicy = async (req, res) => {
   }
 };
 
+
+// Update by ID
+export const updatePrivacyPolicyById = async (req, res) => {
+  const { id } = req.params;
+  const { title, content, date } = req.body;
+
+  try {
+    const policy = await PrivacyPolicy.findById(id);
+    if (!policy) {
+      return res.status(404).json({ message: "Privacy policy not found." });
+    }
+
+    policy.title = title || policy.title;
+    policy.content = content || policy.content;
+    policy.date = date || policy.date;
+
+    await policy.save();
+
+    return res.status(200).json({ message: "Privacy policy updated successfully!" });
+  } catch (error) {
+    console.error("Error updating privacy policy:", error);
+    return res.status(500).json({ message: "Server error. Please try again later." });
+  }
+};
+
+// Delete by ID
+export const deletePrivacyPolicyById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const deletedPolicy = await PrivacyPolicy.findByIdAndDelete(id);
+
+    if (!deletedPolicy) {
+      return res.status(404).json({ message: "Privacy policy not found." });
+    }
+
+    return res.status(200).json({ message: "Privacy policy deleted successfully!" });
+  } catch (error) {
+    console.error("Error deleting privacy policy:", error);
+    return res.status(500).json({ message: "Server error. Please try again later." });
+  }
+};
+
 // Get the current privacy policy
 export const getPrivacyPolicy = async (req, res) => {
   try {
@@ -186,6 +234,51 @@ export const createOrUpdateAboutUs = async (req, res) => {
   }
 };
 
+
+// Update About Us by ID
+export const updateAboutUsById = async (req, res) => {
+  const { id } = req.params;
+  const { title, content, date } = req.body;
+
+  try {
+    const aboutUs = await AboutUs.findById(id);
+    if (!aboutUs) {
+      return res.status(404).json({ message: "About Us not found." });
+    }
+
+    aboutUs.title = title || aboutUs.title;
+    aboutUs.content = content || aboutUs.content;
+    aboutUs.date = date || aboutUs.date;
+
+    await aboutUs.save();
+
+    return res.status(200).json({ message: "About Us updated successfully!" });
+  } catch (error) {
+    console.error("Error updating About Us:", error);
+    return res.status(500).json({ message: "Server error. Please try again later." });
+  }
+};
+
+
+
+// Delete About Us by ID
+export const deleteAboutUsById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const deletedAboutUs = await AboutUs.findByIdAndDelete(id);
+    if (!deletedAboutUs) {
+      return res.status(404).json({ message: "About Us not found." });
+    }
+
+    return res.status(200).json({ message: "About Us deleted successfully!" });
+  } catch (error) {
+    console.error("Error deleting About Us:", error);
+    return res.status(500).json({ message: "Server error. Please try again later." });
+  }
+};
+
+
 // Get About Us
 export const getAboutUs = async (req, res) => {
   try {
@@ -224,6 +317,53 @@ export const submitContactMessage = async (req, res) => {
 };
 
 
+
+// Update Contact Message by ID
+export const updateContactMessageById = async (req, res) => {
+  const { id } = req.params;
+  const { name, email, subject, message, address } = req.body;
+
+  try {
+    const contactMessage = await ContactMessage.findById(id);
+    if (!contactMessage) {
+      return res.status(404).json({ message: "Contact message not found." });
+    }
+
+    contactMessage.name = name || contactMessage.name;
+    contactMessage.email = email || contactMessage.email;
+    contactMessage.subject = subject || contactMessage.subject;
+    contactMessage.message = message || contactMessage.message;
+    contactMessage.address = address || contactMessage.address;
+
+    await contactMessage.save();
+
+    return res.status(200).json({ message: "Contact message updated successfully!" });
+  } catch (error) {
+    console.error("Error updating contact message:", error);
+    return res.status(500).json({ message: "Server error. Please try again later." });
+  }
+};
+
+
+
+// Delete Contact Message by ID
+export const deleteContactMessageById = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const deletedMessage = await ContactMessage.findByIdAndDelete(id);
+    if (!deletedMessage) {
+      return res.status(404).json({ message: "Contact message not found." });
+    }
+
+    return res.status(200).json({ message: "Contact message deleted successfully!" });
+  } catch (error) {
+    console.error("Error deleting contact message:", error);
+    return res.status(500).json({ message: "Server error. Please try again later." });
+  }
+};
+
+
 // GET: Retrieve All Contact Messages
 export const getAllContactMessages = async (req, res) => {
   try {
@@ -239,126 +379,68 @@ export const getAllContactMessages = async (req, res) => {
 
 export const getDashboardData = async (req, res) => {
   try {
-    const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
+    const now = new Date();
+    const startOfDay = new Date(now.setHours(0, 0, 0, 0));
+    const endOfDay = new Date(now.setHours(23, 59, 59, 999));
 
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
 
-    // 1. Active Users (updated in last 24 hours)
+    // ✅ 1. Active Users (updated in last 24 hrs)
     const activeUsers = await User.find({
-      updatedAt: { $gte: yesterday }
+      updatedAt: { $gte: yesterday },
     });
 
-    // 2. Today's Orders
-    const todaysOrders = await Order.find({
-      orderDate: { $gte: startOfDay, $lte: endOfDay }
-    }).populate('user poster businessPoster');
+    // ✅ 2. Today's Birthdays
+    const today = new Date();
+    const day = String(today.getDate()).padStart(2, "0");
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const todayStr = `${day}-${month}`;
 
-    // 3. This Week's Earnings
-    const startOfWeek = new Date();
-    startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
-
-    const earnings = await Order.aggregate([
-      {
-        $match: {
-          orderDate: { $gte: startOfWeek },
-          status: 'Completed'
-        }
-      },
-      {
-        $group: {
-          _id: { $dayOfWeek: "$orderDate" },
-          totalAmount: { $sum: "$totalAmount" }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    const weeklyEarnings = earnings.map(e => ({
-      day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][e._id - 1],
-      amount: e.totalAmount
-    }));
-
-    // 4. Completed Orders Count This Week
-    const completedOrdersThisWeek = await Order.aggregate([
-      {
-        $match: {
-          orderDate: { $gte: startOfWeek },
-          status: 'Completed'
-        }
-      },
-      {
-        $group: {
-          _id: { $dayOfWeek: "$orderDate" },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    const weeklyCompletedOrders = completedOrdersThisWeek.map(order => ({
-      day: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][order._id - 1],
-      count: order.count
-    }));
-
-    // 5. Completed Orders Count (all time)
-    const completedOrdersCount = await Order.countDocuments({ status: 'Completed' });
-
-    // 6. Today's Birthdays
-    const todayStr = new Date().toISOString().slice(5, 10); // 'MM-DD'
     const birthdayUsers = await User.find({
-      dob: { $regex: todayStr }
+      dob: { $regex: `^${todayStr}` },
     });
 
-    // 7. Today's Anniversaries
+    // ✅ 3. Today's Anniversaries
     const anniversaryUsers = await User.find({
-      marriageAnniversaryDate: { $regex: todayStr }
+      marriageAnniversaryDate: { $regex: `^${todayStr}` },
     });
 
-    // 8. Subscribed Plans Summary
-    const usersWithPlans = await User.find({ 'subscribedPlans.0': { $exists: true } });
-    const plans = usersWithPlans.flatMap(user => user.subscribedPlans.map(p => p.name));
+    // ✅ 4. Subscription plan summary
+    const usersWithPlans = await User.find({ "subscribedPlans.0": { $exists: true } });
+
     const planSummary = {};
-    plans.forEach(p => {
-      planSummary[p] = (planSummary[p] || 0) + 1;
+    usersWithPlans.forEach((user) => {
+      user.subscribedPlans.forEach((plan) => {
+        planSummary[plan.name] = (planSummary[plan.name] || 0) + 1;
+      });
     });
 
-    // ✅ New: Total Users Count
+    // ✅ 5. Count Data
     const totalUsersCount = await User.countDocuments();
-
-    // ✅ New: Total Orders Count
-    const totalOrdersCount = await Order.countDocuments();
-
-    // ✅ New: Total Subscription Plans from Plan model
-    const totalSubscriptionPlans = await Plan.countDocuments();
-
-    // ✅ New: Total Active Subscriptions (users with at least one subscribed plan)
+    const totalPosters = await Poster.countDocuments();
+    const totalCategories = await Category.countDocuments();
+    const totalBanners = await Banner.countDocuments();
+    const totalLogos = await Logo.countDocuments();
     const totalActiveSubscriptions = usersWithPlans.length;
 
     return res.status(200).json({
-      activeUsersCount: activeUsers.length,
       totalUsersCount,
-      totalOrdersCount,
-      totalSubscriptionPlans,
+      totalPosters,
+      totalCategories,
+      totalBanners,
+      totalLogos,
       totalActiveSubscriptions,
-      todaysOrders,
-      totalEarnings: weeklyEarnings.reduce((sum, day) => sum + day.amount, 0),
-      completedOrdersCount,
+      activeUsersCount: activeUsers.length,
       birthdayUsers,
       anniversaryUsers,
       planSummary,
-      weeklyEarnings,
-      weeklyCompletedOrders,
     });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Dashboard fetch failed' });
+    console.error("Dashboard Error:", err);
+    return res.status(500).json({ error: "Dashboard fetch failed" });
   }
 };
-
-
 
 export const createLogo = async (req, res) => {
   try {

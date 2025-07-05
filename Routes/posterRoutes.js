@@ -17,8 +17,14 @@ import {
   updatePoster,
   canvasCreatePoster,
   getAllCanvasPosters,
-  getSingleCanvasPoster
+  getSingleCanvasPoster,
+  createBanner,
+  getAllBanners,
+  updateBanner,
+  deleteBanner
 } from '../Controller/PosterController.js';
+import fileUpload from "express-fileupload";
+
 
 const router = express.Router();
 
@@ -39,6 +45,11 @@ router.post('/create', Postercreate);
 router.post('/create', createPosterAndUpload);
 router.get('/canvasposters', getAllCanvasPosters);
 router.get('/singlecanvasposters/:posterId', getSingleCanvasPoster);
+router.post("/createbanner", createBanner);
+router.get("/getbanners", getAllBanners);
+router.put("/updatebanner/:id", updateBanner);
+router.delete("/deletebanner/:id", deleteBanner);
+
 
 
 

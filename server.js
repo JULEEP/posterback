@@ -32,7 +32,7 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://posterbnaoadmin.vercel.app', 'http://194.164.148.244:3000', 'http://194.164.148.244:3079'],
+  origin: ['http://localhost:3000', 'https://posterbnaoadmin.vercel.app', 'http://194.164.148.244:3000', 'http://194.164.148.244:3079', 'https://posterbnaoweb.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));

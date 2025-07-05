@@ -9,12 +9,12 @@ import User from '../Models/User.js';
 import Payment from '../Models/Payment.js';
 import { v4 as uuidv4 } from 'uuid';
 
-// ✅ Init: PhonePe client with production keys
+// ✅ Init: PhonePe client with UAT (test) credentials
 const client = StandardCheckoutClient.getInstance(
-  "SU2505151313203753742541", // ✅ Live Merchant ID
-  "645047c3-c1f7-4157-9d01-1a07c84e4372", // ✅ Live Salt Key
+  "TEST-M22HFU8UDDBYR_25051", // ✅ Test Merchant ID
+  "MjcxNTAxYjAtZjA1Ny00YmQwLTg3YTktMGIyOTNmMjIzNmMz", // ✅ Test Salt Key
   1, // ✅ Salt Index
-  Env.PROD // ✅ Live Mode
+  Env.UAT // ✅ Use Test Mode
 );
 
 export const payWithPhonePe = async (req, res) => {
@@ -29,20 +29,18 @@ export const payWithPhonePe = async (req, res) => {
     const plan = await Plan.findById(planId);
     if (!plan) return res.status(404).json({ message: "Plan not found" });
 
-    // Prepare payment info
-    const amount = plan.offerPrice * 100; // in paise
+    const amount = plan.offerPrice * 100;
     const merchantOrderId = `txn_${uuidv4()}`;
 
-    // ✅ Build the payment request — without .merchantId()
+    // Prepare payment request
     const request = StandardCheckoutPayRequest.builder()
       .merchantOrderId(merchantOrderId)
       .amount(amount)
       .build();
 
-    // ✅ Make the payment request
     const response = await client.pay(request);
 
-    // Save payment to DB
+    // Save payment record
     await Payment.create({
       merchantOrderId,
       userId: user._id,
@@ -53,20 +51,36 @@ export const payWithPhonePe = async (req, res) => {
       paymentResponse: response,
     });
 
-    // Format dates
+    // Calculate plan start and end dates
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setFullYear(endDate.getFullYear() + 1);
+
+    // 👇 Add the plan to user's subscribedPlans array
+    user.subscribedPlans.push({
+      planId: plan._id,
+      name: plan.name,
+      originalPrice: plan.originalPrice,
+      offerPrice: plan.offerPrice,
+      discountPercentage: plan.discountPercentage,
+      duration: plan.duration,
+      startDate,
+      endDate,
+      isPurchasedPlan: true,
+    });
+
+    await user.save(); // ✅ Save updated user
+
+    // Format dates for response
     const formatDate = (date) => {
       const d = new Date(date);
       return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
     };
 
-    const startDate = new Date();
-    const endDate = new Date();
-    endDate.setFullYear(endDate.getFullYear() + 1);
-
-    // Final success response
+    // Send response
     res.status(200).json({
       success: true,
-      message: "Payment initiated",
+      message: "Payment initiated and plan added to user",
       merchantOrderId,
       response,
       amount,
@@ -99,6 +113,7 @@ export const payWithPhonePe = async (req, res) => {
     });
   }
 };
+
 
 // ✅ 2. Handle Payment Callback
 export const phonePeCallbackHandler = async (req, res) => {

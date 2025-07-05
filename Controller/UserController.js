@@ -18,6 +18,13 @@ import cron from 'node-cron';
 import dayjs from 'dayjs';
 import isSameOrAfter from 'dayjs/plugin/isSameOrAfter.js'; // ✅ note the ".js"
 dayjs.extend(isSameOrAfter);
+import moment from 'moment'; // Make sure to install: npm install moment
+import crypto from 'crypto';
+
+
+import nodemailer from 'nodemailer';
+
+
 
 
 
@@ -29,7 +36,12 @@ dotenv.config();
 // Create Twilio client
 
 
-
+// Cloudinary Config
+cloudinary.config({
+  cloud_name: process.env.CLOUD_NAME,
+  api_key: process.env.CLOUD_API_KEY,
+  api_secret: process.env.CLOUD_API_SECRET,
+});
 
 
 // Set up storage for profile images using Multer
@@ -90,13 +102,19 @@ export const registerUser = async (req, res) => {
       return res.status(400).json({ message: 'Name, Mobile, and Date of Birth are required!' });
     }
 
-    // Check duplicate
+    // Format DOB and Anniversary as "DD-MM-YYYY"
+    const formattedDOB = moment(dob, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY');
+    const formattedAnniversary = marriageAnniversaryDate
+      ? moment(marriageAnniversaryDate, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY')
+      : null;
+
+    // Check for duplicates
     const userExist = await User.findOne({ $or: [{ email }, { mobile }] });
     if (userExist) {
       return res.status(400).json({ message: 'User with this email or mobile already exists!' });
     }
 
-    // Generate unique referral code
+    // Generate a unique referral code
     let newReferralCode;
     let codeExists = true;
     while (codeExists) {
@@ -105,24 +123,24 @@ export const registerUser = async (req, res) => {
       if (!existingCode) codeExists = false;
     }
 
-    // Prepare user
+    // Prepare new user object
     const newUser = new User({
       name,
       email,
       mobile,
-      dob,
-      marriageAnniversaryDate,
+      dob: formattedDOB,
+      marriageAnniversaryDate: formattedAnniversary,
       referralCode: newReferralCode,
     });
 
-    // ✅ Referral reward logic
+    // ✅ Referral logic
     if (enteredCode) {
       const referrer = await User.findOne({ referralCode: enteredCode.toUpperCase() });
       if (referrer) {
         referrer.wallet = (referrer.wallet || 0) + 100;
         await referrer.save();
 
-        newUser.referredBy = referrer._id; // track reference
+        newUser.referredBy = referrer._id;
       } else {
         return res.status(400).json({ message: 'Invalid referral code!' });
       }
@@ -150,7 +168,6 @@ export const registerUser = async (req, res) => {
         updatedAt: newUser.updatedAt,
       },
     });
-
   } catch (error) {
     console.error('Registration error:', error);
     return res.status(500).json({ message: 'Server error' });
@@ -160,82 +177,66 @@ export const registerUser = async (req, res) => {
 
 
 
-
 // Direct Twilio credentials
 const TWILIO_SID = 'ACd37d269a71fda78661c1fd2a54a5b567';
-const TWILIO_AUTH_TOKEN = '81cf6d33eb27bf051991ebcd9aecd9d0';
+const TWILIO_AUTH_TOKEN = '06dc6986bc923184ef0cfa8824485bb2';
 const TWILIO_PHONE = '+16193309459'; // Your Twilio phone number
 
-// Twilio client setup
+
+
 const client = twilio(TWILIO_SID, TWILIO_AUTH_TOKEN);
 
-// 🔢 Generate 4-digit OTP
 const generateOTP = () => {
   return Math.floor(1000 + Math.random() * 9000);
 };
 
-// 📲 Send OTP with clean message
 const sendOTP = async (mobile, otp) => {
   const phoneNumber = `+91${mobile}`;
- const message = `Your one-time password (OTP) is: ${otp}. It is valid for 5 minutes. Do not share it with anyone. – Team POSTER BANAVO`;
+  const message = `Your one-time password (OTP) is: ${otp}. It is valid for 30 seconds. Do not share it with anyone. – Team POSTER BANAVO`;
 
+  await client.messages.create({
+    body: message,
+    from: TWILIO_PHONE,
+    to: phoneNumber,
+  });
 
-  try {
-    await client.messages.create({
-      body: message,
-      to: phoneNumber,
-      from: TWILIO_PHONE,
-    });
-
-    console.log(`✅ OTP sent to ${phoneNumber}: ${otp}`);
-  } catch (error) {
-    console.error('❌ Error sending OTP:', error);
-    throw new Error('Failed to send OTP');
-  }
+  console.log(`✅ OTP sent to ${phoneNumber}: ${otp}`);
 };
 
-// 👤 LOGIN USER – Send OTP
 export const loginUser = async (req, res) => {
   const { mobile } = req.body;
-
-  if (!mobile || !/^[0-9]{10}$/.test(mobile)) {
-    return res.status(400).json({ error: 'Enter a valid 10-digit mobile number' });
-  }
 
   try {
     const user = await User.findOne({ mobile });
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found. Please register first.' });
+      return res.status(404).json({ message: 'User not found.' });
     }
 
     const otp = generateOTP();
-    await sendOTP(mobile, otp);
+    const otpExpiry = new Date(Date.now() + 30 * 1000); // 30 सेकंड बाद expire
 
+    // DB में otp और otpExpiry save करें
     user.otp = otp;
-    user.otpExpiry = Date.now() + 5 * 60 * 1000; // 5 minutes expiry
+    user.otpExpiry = otpExpiry;
     await user.save();
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET_KEY, { expiresIn: '1h' });
+    await sendOTP(mobile, otp);
 
-    return res.status(200).json({
-      message: 'OTP sent successfully. Please verify.',
-      otp, // ⚠️ For testing only, remove or mask in production
-      token,
-      user: {
-        _id: user._id,
-        mobile: user.mobile,
-        name: user.name || null,
-        dob: user.dob || null,
-        email: user.email || null, // ✅ Added email
-      },
+    // Response में पूरा user data (otp और otpExpiry को exclude कर सकते हैं)
+    const userResponse = user.toObject();
+    delete userResponse.otp;
+    delete userResponse.otpExpiry;
+
+    res.status(200).json({
+      message: 'OTP sent successfully.',
+      user: userResponse
     });
-  } catch (err) {
-    console.error('❌ Login Error:', err);
-    return res.status(500).json({ error: 'Something went wrong', details: err.message });
+  } catch (error) {
+    console.error('Error in loginUser:', error);
+    res.status(500).json({ message: 'Something went wrong.' });
   }
 };
-
 
 
 export const verifyOTP = async (req, res) => {
@@ -474,43 +475,51 @@ export const createProfile = [
   },
 ];
 
-// Update Profile Image (with userId in params)
-export const editProfile = [
-  upload.single('profileImage'),  // 'profileImage' is the field name in the Form Data
-  async (req, res) => {
-    try {
-      const userId = req.params.id; // Get userId from params
+// Update Profile Image using express-fileupload and Cloudinary
+// Update Profile Image using express-fileupload and Cloudinary
+export const editProfile = async (req, res) => {
+  try {
+    const userId = req.params.id;
 
-      // Check if the user exists by userId
-      const existingUser = await User.findById(userId);
-
-      if (!existingUser) {
-        return res.status(404).json({ message: 'User not found!' });
-      }
-
-      // If a profile image is uploaded, update the profileImage field
-      const profileImage = req.file ? `/uploads/profiles/${req.file.filename}` : existingUser.profileImage;
-
-      // Update the user's profile image
-      existingUser.profileImage = profileImage;
-
-      // Save the updated user to the database
-      await existingUser.save();
-
-      return res.status(200).json({
-        message: 'Profile image updated successfully!',
-        user: {
-          id: existingUser._id,
-          profileImage: existingUser.profileImage,
-        },
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ message: 'Server error' });
+    // Find the user
+    const existingUser = await User.findById(userId);
+    if (!existingUser) {
+      return res.status(404).json({ message: 'User not found!' });
     }
-  },
-];
 
+    let profileImageUrl = existingUser.profileImage;
+
+    // Check if profile image is uploaded
+    if (req.files && req.files.profileImage) {
+      const file = req.files.profileImage;
+
+      // Upload to Cloudinary using temp file
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: 'profile_images',
+      });
+
+      profileImageUrl = result.secure_url;
+
+      // 🔴 No fs.unlinkSync — just skip cleanup
+    }
+
+    // Save the new profile image
+    existingUser.profileImage = profileImageUrl;
+    await existingUser.save();
+
+    res.status(200).json({
+      message: 'Profile image updated successfully!',
+      user: {
+        id: existingUser._id,
+        profileImage: existingUser.profileImage,
+      },
+    });
+
+  } catch (error) {
+    console.error('❌ Error updating profile:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+};
 
 // Get Profile (with userId in params)
 export const getProfile = async (req, res) => {
@@ -860,33 +869,45 @@ export const purchasePlan = async (req, res) => {
 
 
 
-// Controller to get user's subscribed plans (detailed response)
 export const getSubscribedPlan = async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Check if user exists
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // Check if user has any subscribed plans
     if (!user.subscribedPlans || user.subscribedPlans.length === 0) {
-      return res.status(404).json({ success: false, message: 'No subscribed plans found' });
+      user.isSubscribedPlan = false; // also update in DB
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        message: 'No subscribed plans found',
+        isSubscribedPlan: false,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+        },
+        subscribedPlans: [],
+      });
     }
 
-    // Format date helper
     const formatDate = (date) => {
       const d = new Date(date);
       return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`;
     };
 
-    // Prepare detailed subscribed plans
+    const now = new Date();
+
     const detailedPlans = await Promise.all(
       user.subscribedPlans.map(async (planEntry) => {
         const plan = await Plan.findById(planEntry.planId);
-        if (!plan) return null; // Plan not found, skip
+        if (!plan) return null;
+
         const startDate = new Date(planEntry.startDate);
         const endDate = new Date(planEntry.endDate);
 
@@ -900,17 +921,22 @@ export const getSubscribedPlan = async (req, res) => {
           startDate: formatDate(startDate),
           endDate: formatDate(endDate),
           isPurchasedPlan: true,
+          isActive: endDate >= now,
         };
       })
     );
 
-    // Remove null entries
     const subscribedPlans = detailedPlans.filter((p) => p !== null);
+    const isSubscribedPlan = subscribedPlans.some((plan) => plan.isActive);
 
-    // Send final response
+    // ✅ Save to DB
+    user.isSubscribedPlan = isSubscribedPlan;
+    await user.save();
+
     res.status(200).json({
       success: true,
       message: 'Subscribed plans fetched successfully',
+      isSubscribedPlan,
       user: {
         id: user._id,
         name: user.name,
@@ -919,6 +945,7 @@ export const getSubscribedPlan = async (req, res) => {
       },
       subscribedPlans,
     });
+
   } catch (error) {
     console.error('Error fetching subscribed plans:', error);
     res.status(500).json({
@@ -928,6 +955,7 @@ export const getSubscribedPlan = async (req, res) => {
     });
   }
 };
+
 
 
 
@@ -1469,6 +1497,107 @@ export const getUserWallet = async (req, res) => {
   } catch (error) {
     console.error('Error fetching wallet balance:', error);
     return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+
+// Setup Nodemailer transport
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'pms226803@gmail.com', // Your email address
+    pass: 'nras bifq xsxz urrm', // Use your app password here
+  },
+  tls: {
+    rejectUnauthorized: false, // Allow insecure connections (for debugging)
+  },
+  connectionTimeout: 10000, // Increase connection timeout to 10 seconds
+  greetingTimeout: 10000,    // Increase greeting timeout to 10 seconds
+  socketTimeout: 10000,      // Increase socket timeout to 10 seconds
+});
+
+export const deleteAccount = async (req, res) => {
+  const { email, reason } = req.body;
+
+  // Validate email and reason
+  if (!email || !reason) {
+    return res.status(400).json({ message: 'Email and reason are required' });
+  }
+
+  try {
+    // Find the user by email
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Generate a unique token for account deletion
+    const token = crypto.randomBytes(20).toString('hex');
+    const deleteLink = `${process.env.BASE_URL}/confirm-delete-account/${token}`;
+
+    // Set the deleteToken and deleteTokenExpiration
+    user.deleteToken = token;
+    user.deleteTokenExpiration = Date.now() + 3600000;  // Token expires in 1 hour
+
+    // Log the user object before saving
+    console.log('User before saving:', user);
+
+    // Save the token and expiration time to the database
+    await user.save();  // This should now save the user along with the deleteToken and deleteTokenExpiration
+
+    // Log after saving to confirm
+    console.log('User after saving:', user);
+
+    // Send the confirmation email
+    const mailOptions = {
+      from: 'pms226803@gmail.com',
+      to: email,
+      subject: 'Account Deletion Request Received',
+      text: `Hi ${user.name},\n\nWe have received your account deletion request. To confirm the deletion of your account, please click the link below:\n\n${deleteLink}\n\nReason: ${reason}\n\nIf you have any questions or need further assistance, please feel free to contact us at businessbadavo@gmail.com.\n\nBest regards,\nYour Team`,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.status(200).json({
+      message: 'Account deletion request has been processed.We are send mail shortly.Please check your email and confirm the link to delete.',
+      token: token // Send the token in the response
+    });
+  } catch (err) {
+    console.error('Error in deleteAccount:', err);
+    return res.status(500).json({ message: 'Something went wrong' });
+  }
+};
+
+
+export const confirmDeleteAccount = async (req, res) => {
+  const { token } = req.params;
+
+  try {
+    const user = await User.findOne({
+      deleteToken: token,
+      deleteTokenExpiration: { $gt: Date.now() }, // Check if token is still valid
+    });
+
+    if (!user) {
+      return res.status(200).json({
+        message: 'Your account has been successfully deleted.',
+      });
+    }
+
+    // Token is valid, delete the user account
+    await User.deleteOne({ _id: user._id });
+
+    return res.status(200).json({
+      message: 'Your account has been successfully deleted.',
+    });
+
+  } catch (err) {
+    console.error('Error in confirmDeleteAccount:', err);
+
+    return res.status(200).json({
+      message: 'Your account has been successfully deleted.',
+    });
   }
 };
 

@@ -23,6 +23,12 @@ import {
     logoutAdmin,
     deleteUser,
     updateAdminProfile,
+    updatePrivacyPolicyById,
+    deletePrivacyPolicyById,
+    updateAboutUsById,
+    deleteAboutUsById,
+    updateContactMessageById,
+    deleteContactMessageById,
 } from "../Controller/AdminController.js";
 
 const router = express.Router();
@@ -31,11 +37,17 @@ router.get("/getallusers", getAllUsers);
 router.delete("/deleteuser/:id", deleteUser);
 router.get('/usersplans', getAllUsersWithSubscribedPlans);
 router.post('/privacy-policy', createOrUpdatePrivacyPolicy);
+router.put('/updatepolicy/:id', updatePrivacyPolicyById);
+router.delete('/deletepolicy/:id', deletePrivacyPolicyById);
 router.get('/getpolicy', getPrivacyPolicy);
 router.post('/aboutus', createOrUpdateAboutUs);
+router.put('/updateaboutus/:id', updateAboutUsById);
+router.delete('/deleteaboutus/:id', deleteAboutUsById);
 router.get('/getaboutus', getAboutUs);
 router.post('/contact', submitContactMessage);     // POST /api/contact
 router.get('/getcontactus', getAllContactMessages);     // GET /api/contact
+router.put('/updatecontactmessage/:id', updateContactMessageById);
+router.delete('/deletecontactmessage/:id', deleteContactMessageById);
 router.get('/dashboard', getDashboardData);
 router.post('/createlogo', createLogo);
 router.get('/getlogos', getAllLogos);

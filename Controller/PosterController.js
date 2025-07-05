@@ -6,6 +6,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import os from 'os';
 import PosterCanvas from "../Models/PosterCanvas.js";
+import streamifier  from 'streamifier'
+import Banner from "../Models/Banner.js";
 
 
 
@@ -508,37 +510,123 @@ export const createPosterAndUpload = async (req, res) => {
 
 
 
+// // 🔧 Define generatePreviewImage function
+// const generatePreviewImage = async (bgUrl, overlayUrls = [], textSettings = {}) => {
+//   const canvas = createCanvas(1080, 1080);
+//   const ctx = canvas.getContext('2d');
+
+//   const background = await loadImage(bgUrl);
+//   ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+//   for (const overlayUrl of overlayUrls) {
+//     const overlay = await loadImage(overlayUrl);
+//     ctx.drawImage(overlay, 0, 0, canvas.width, canvas.height); // Adjust if needed
+//   }
+
+//   ctx.font = '30px Arial';
+//   ctx.fillStyle = 'white';
+
+//   if (textSettings.name)
+//     ctx.fillText(textSettings.name, textSettings.nameX || 50, textSettings.nameY || 1000);
+
+//   if (textSettings.email)
+//     ctx.fillText(textSettings.email, textSettings.emailX || 50, textSettings.emailY || 1040);
+
+//   if (textSettings.mobile)
+//     ctx.fillText(textSettings.mobile, textSettings.mobileX || 50, textSettings.mobileY || 1080);
+
+//   const outputPath = path.join(__dirname, `../uploads/preview-${Date.now()}.png`);
+//   const out = fs.createWriteStream(outputPath);
+//   const stream = canvas.createPNGStream();
+//   stream.pipe(out);
+
+//   return new Promise((resolve, reject) => {
+//     out.on('finish', () => resolve(outputPath));
+//     out.on('error', reject);
+//   });
+// };
+
+
+const generatePreviewImage = async (bgUrl, overlayUrls = [], overlaySettings = {}, textSettings = {}) => {
+  const canvas = createCanvas(1080, 1080);
+  const ctx = canvas.getContext('2d');
+
+  // Draw background
+  const background = await loadImage(bgUrl);
+  ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+
+  // Draw overlays at positions/sizes from overlaySettings.overlays array
+  for (let i = 0; i < overlayUrls.length; i++) {
+    const overlay = await loadImage(overlayUrls[i]);
+    const pos = (overlaySettings.overlays && overlaySettings.overlays[i]) || {};
+    const x = pos.x || 0;
+    const y = pos.y || 0;
+    const width = pos.width || canvas.width;
+    const height = pos.height || canvas.height;
+    ctx.drawImage(overlay, x, y, width, height);
+  }
+
+  // Draw shapes
+  if (overlaySettings.shapes && Array.isArray(overlaySettings.shapes)) {
+    overlaySettings.shapes.forEach(shape => {
+      ctx.fillStyle = shape.color || 'rgba(0,0,0,0.5)';
+      ctx.beginPath();
+      if (shape.type === 'rectangle') {
+        ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+      } else if (shape.type === 'circle') {
+        ctx.arc(shape.x, shape.y, shape.radius, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      ctx.closePath();
+    });
+  }
+
+  // Draw texts
+  ctx.font = '30px Arial';
+  ctx.fillStyle = 'white';
+
+  if (textSettings.name)
+    ctx.fillText(textSettings.name, textSettings.nameX || 50, textSettings.nameY || 1040);
+
+  if (textSettings.email)
+    ctx.fillText(textSettings.email, textSettings.emailX || 350, textSettings.emailY || 1040);
+
+  if (textSettings.mobile)
+    ctx.fillText(textSettings.mobile, textSettings.mobileX || 650, textSettings.mobileY || 1040);
+
+  const buffer = canvas.toBuffer('image/png');
+
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { folder: 'posters/previews', resource_type: 'image' },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result.secure_url);
+      }
+    );
+    streamifier.createReadStream(buffer).pipe(uploadStream);
+  });
+};
+
 export const canvasCreatePoster = async (req, res) => {
   try {
     const {
-      name,
-      categoryName,
-      price,
-      description,
-      size,
-      festivalDate,
-      inStock,
-      tags,
-      email,
-      mobile,
-      title,
-      textSettings,
-      overlaySettings
+      name, categoryName, price, description,
+      size, festivalDate, inStock, tags,
+      email, mobile, title,
+      textSettings, overlaySettings
     } = req.body;
 
-    // Check for background image
     if (!req.files || !req.files.bgImage) {
       return res.status(400).json({ message: 'Background image is required' });
     }
 
-    // Upload background image
     const bgFile = Array.isArray(req.files.bgImage) ? req.files.bgImage[0] : req.files.bgImage;
     const bgUploadResult = await cloudinary.uploader.upload(bgFile.tempFilePath, {
       folder: 'posters/backgrounds'
     });
     const bgImageUrl = bgUploadResult.secure_url;
 
-    // Upload overlay images (optional)
     let overlayImages = [];
     if (req.files.images) {
       overlayImages = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
@@ -552,7 +640,17 @@ export const canvasCreatePoster = async (req, res) => {
       uploadedOverlayUrls.push(result.secure_url);
     }
 
-    // Create new poster
+    const parsedTextSettings = textSettings ? JSON.parse(textSettings) : {};
+    const parsedOverlaySettings = overlaySettings ? JSON.parse(overlaySettings) : {};
+
+    // Generate preview with overlays and shapes rendered using positions
+    const previewImageUrl = await generatePreviewImage(bgImageUrl, uploadedOverlayUrls, parsedOverlaySettings, {
+      ...parsedTextSettings,
+      name,
+      email,
+      mobile
+    });
+
     const newPoster = new Poster({
       name,
       categoryName,
@@ -565,17 +663,38 @@ export const canvasCreatePoster = async (req, res) => {
       email,
       mobile,
       title,
-      textSettings: textSettings ? JSON.parse(textSettings) : {},
-      overlaySettings: overlaySettings ? JSON.parse(overlaySettings) : {},
+      textSettings: parsedTextSettings,
+      overlaySettings: parsedOverlaySettings,
       images: uploadedOverlayUrls,
-      backgroundImage: bgImageUrl
+      backgroundImage: bgImageUrl,
+      previewImage: previewImageUrl
     });
 
     await newPoster.save();
 
     res.status(201).json({
       message: 'Poster created successfully',
-      poster: newPoster
+      poster: {
+        _id: newPoster._id,
+        name: newPoster.name,
+        categoryName: newPoster.categoryName,
+        price: newPoster.price,
+        description: newPoster.description,
+        size: newPoster.size,
+        festivalDate: newPoster.festivalDate,
+        inStock: newPoster.inStock,
+        tags: newPoster.tags,
+        email: newPoster.email,
+        mobile: newPoster.mobile,
+        title: newPoster.title,
+        textSettings: newPoster.textSettings,
+        overlaySettings: newPoster.overlaySettings, // <-- includes positions & shapes
+        images: newPoster.images,
+        backgroundImage: newPoster.backgroundImage,
+        previewImage: newPoster.previewImage,
+        createdAt: newPoster.createdAt,
+        updatedAt: newPoster.updatedAt
+      }
     });
 
   } catch (error) {
@@ -583,7 +702,6 @@ export const canvasCreatePoster = async (req, res) => {
     res.status(500).json({ message: 'Error creating poster', error: error.message });
   }
 };
-
 
 
 
@@ -623,6 +741,120 @@ export const getSingleCanvasPoster = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
+
+export const createBanner = async (req, res) => {
+  try {
+    if (!req.files || !req.files.images) {
+      return res.status(400).json({ message: "No banner images uploaded" });
+    }
+
+    const files = Array.isArray(req.files.images)
+      ? req.files.images
+      : [req.files.images];
+
+    const imageUrls = [];
+
+    for (const file of files) {
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "banners",
+      });
+      imageUrls.push(result.secure_url);
+    }
+
+    const newBanner = new Banner({
+      images: imageUrls,
+    });
+
+    await newBanner.save();
+
+    res.status(201).json({
+      message: "Banner created successfully",
+      banner: newBanner,
+    });
+  } catch (error) {
+    console.error("❌ Error creating banner:", error);
+    res.status(500).json({
+      message: "Error creating banner",
+      error: error.message,
+    });
+  }
+};
+
+
+// GET All Banners
+export const getAllBanners = async (req, res) => {
+  try {
+    const banners = await Banner.find().sort({ createdAt: -1 });
+    res.status(200).json(banners);
+  } catch (error) {
+    console.error("❌ Error fetching banners:", error);
+    res.status(500).json({ message: "Error fetching banners", error: error.message });
+  }
+};
+
+// UPDATE Banner Images by ID
+export const updateBanner = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!req.files || !req.files.images) {
+      return res.status(400).json({ message: "No banner images uploaded" });
+    }
+
+    const files = Array.isArray(req.files.images)
+      ? req.files.images
+      : [req.files.images];
+
+    const imageUrls = [];
+
+    for (const file of files) {
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "banners",
+      });
+      imageUrls.push(result.secure_url);
+    }
+
+    const updatedBanner = await Banner.findByIdAndUpdate(
+      id,
+      { images: imageUrls },
+      { new: true }
+    );
+
+    if (!updatedBanner) {
+      return res.status(404).json({ message: "Banner not found" });
+    }
+
+    res.status(200).json({
+      message: "Banner updated successfully",
+      banner: updatedBanner,
+    });
+  } catch (error) {
+    console.error("❌ Error updating banner:", error);
+    res.status(500).json({ message: "Error updating banner", error: error.message });
+  }
+};
+
+// DELETE Banner by ID
+export const deleteBanner = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deletedBanner = await Banner.findByIdAndDelete(id);
+
+    if (!deletedBanner) {
+      return res.status(404).json({ message: "Banner not found" });
+    }
+
+    res.status(200).json({
+      message: "Banner deleted successfully",
+    });
+  } catch (error) {
+    console.error("❌ Error deleting banner:", error);
+    res.status(500).json({ message: "Error deleting banner", error: error.message });
+  }
+};
+
 
 
 

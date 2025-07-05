@@ -28,9 +28,7 @@ import {
      deleteOrder,
      showBirthdayWishOrCountdown,
      getReferralCodeByUserId,
-     getUserWallet,
-     deleteAccount,
-     confirmDeleteAccount
+     getUserWallet
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -77,8 +75,6 @@ router.get('/userorders/:userId', getOrdersByUserId); // GET /api/orders/user/:u
 router.get('/wishes/:userId', showBirthdayWishOrCountdown);
 router.get('/refferalcode/:userId', getReferralCodeByUserId);
 router.get('/wallet/:userId', getUserWallet);
-router.post('/deleteaccount', deleteAccount)
-router.get('/confirm-delete-account/:token', confirmDeleteAccount);
 
 
 

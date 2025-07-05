@@ -23,6 +23,8 @@ const userSchema = new mongoose.Schema({
     type: Date, // Expiry time for OTP
     required: false,
   },
+   deleteToken: { type: String, default: null }, // This will store the deletion token
+  deleteTokenExpiration: { type: Date, default: null }, // This will store the expiration time of the token
   // Added fields as strings
   dob: {
     type: String, // Date of Birth as String
@@ -61,6 +63,11 @@ referralPoints: {
     type: String,
     default: 'default-profile-image.jpg', // Optional default image
   },
+
+  isSubscribedPlan: {
+  type: Boolean,
+  default: false,
+},
   // other fields
   subscribedPlans: [
     {
