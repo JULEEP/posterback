@@ -30,7 +30,8 @@ import {
      getReferralCodeByUserId,
      getUserWallet,
      deleteAccount,
-     confirmDeleteAccount
+     confirmDeleteAccount,
+     deleteUser
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -79,6 +80,8 @@ router.get('/refferalcode/:userId', getReferralCodeByUserId);
 router.get('/wallet/:userId', getUserWallet);
 router.post('/deleteaccount', deleteAccount)
 router.get('/confirm-delete-account/:token', confirmDeleteAccount);
+router.delete('/delete-user/:userId', deleteUser);
+
 
 
 

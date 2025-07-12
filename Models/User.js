@@ -47,6 +47,7 @@ referralPoints: {
   type: Number,
   default: 0,
 },
+referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   // Customers field with an array of customers inside the same schema
   customers: [
     {
@@ -59,6 +60,7 @@ referralPoints: {
       anniversaryDate: { type: Date, required: false },
     }
   ],
+  wallet: { type: Number, default: 0 },
   profileImage: {
     type: String,
     default: 'default-profile-image.jpg', // Optional default image

@@ -21,18 +21,24 @@ export const payWithPhonePe = async (req, res) => {
   try {
     const { userId, planId } = req.body;
 
-    // Validate user
+    // ✅ Validate user
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Validate plan
+    // ✅ Validate plan
     const plan = await Plan.findById(planId);
     if (!plan) return res.status(404).json({ message: "Plan not found" });
 
-    const amount = plan.offerPrice * 100;
+    // 💰 Apply referral discount if user was referred
+    let offerPrice = plan.offerPrice;
+    if (user.referredBy) {
+      offerPrice = Math.max(offerPrice - 100, 0); // Prevent negative amounts
+    }
+
+    const amount = offerPrice * 100; // Convert to paise
     const merchantOrderId = `txn_${uuidv4()}`;
 
-    // Prepare payment request
+    // ✅ Prepare PhonePe payment request
     const request = StandardCheckoutPayRequest.builder()
       .merchantOrderId(merchantOrderId)
       .amount(amount)
@@ -40,7 +46,7 @@ export const payWithPhonePe = async (req, res) => {
 
     const response = await client.pay(request);
 
-    // Save payment record
+    // 💾 Save payment record
     await Payment.create({
       merchantOrderId,
       userId: user._id,
@@ -51,17 +57,17 @@ export const payWithPhonePe = async (req, res) => {
       paymentResponse: response,
     });
 
-    // Calculate plan start and end dates
+    // 📅 Calculate subscription duration
     const startDate = new Date();
     const endDate = new Date();
     endDate.setFullYear(endDate.getFullYear() + 1);
 
-    // 👇 Add the plan to user's subscribedPlans array
+    // 👇 Push the plan into the user's subscription array
     user.subscribedPlans.push({
       planId: plan._id,
       name: plan.name,
       originalPrice: plan.originalPrice,
-      offerPrice: plan.offerPrice,
+      offerPrice: offerPrice,
       discountPercentage: plan.discountPercentage,
       duration: plan.duration,
       startDate,
@@ -69,15 +75,14 @@ export const payWithPhonePe = async (req, res) => {
       isPurchasedPlan: true,
     });
 
-    await user.save(); // ✅ Save updated user
+    await user.save();
 
-    // Format dates for response
     const formatDate = (date) => {
       const d = new Date(date);
       return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
     };
 
-    // Send response
+    // ✅ Send success response
     res.status(200).json({
       success: true,
       message: "Payment initiated and plan added to user",
@@ -89,7 +94,7 @@ export const payWithPhonePe = async (req, res) => {
         id: plan._id,
         name: plan.name,
         originalPrice: plan.originalPrice,
-        offerPrice: plan.offerPrice,
+        offerPrice: offerPrice,
         discountPercentage: plan.discountPercentage,
         duration: plan.duration,
         startDate: formatDate(startDate),

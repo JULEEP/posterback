@@ -97,33 +97,46 @@ export const registerUser = async (req, res) => {
       referralCode: enteredCode,
     } = req.body;
 
-    // Validation
     if (!name || !mobile || !dob) {
-      return res.status(400).json({ message: 'Name, Mobile, and Date of Birth are required!' });
+      return res.status(400).json({ message: 'Name, Mobile, and DOB are required.' });
     }
 
-    // Format DOB and Anniversary as "DD-MM-YYYY"
+    // Format dates
     const formattedDOB = moment(dob, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY');
     const formattedAnniversary = marriageAnniversaryDate
       ? moment(marriageAnniversaryDate, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY')
       : null;
 
-    // Check for duplicates
-    const userExist = await User.findOne({ $or: [{ email }, { mobile }] });
-    if (userExist) {
+    // Check duplicate
+    const existingUser = await User.findOne({ $or: [{ email }, { mobile }] });
+    if (existingUser) {
       return res.status(400).json({ message: 'User with this email or mobile already exists!' });
     }
 
-    // Generate a unique referral code
+    // Generate unique referral code
     let newReferralCode;
-    let codeExists = true;
-    while (codeExists) {
+    let isUnique = false;
+    while (!isUnique) {
       newReferralCode = generateReferralCode();
-      const existingCode = await User.findOne({ referralCode: newReferralCode });
-      if (!existingCode) codeExists = false;
+      const exists = await User.findOne({ referralCode: newReferralCode });
+      if (!exists) isUnique = true;
     }
 
-    // Prepare new user object
+    let referredBy = null;
+
+    // If referral code entered → credit 100 to that user's wallet
+    if (enteredCode) {
+      const referrer = await User.findOne({ referralCode: enteredCode.toUpperCase() });
+      if (referrer) {
+        referrer.wallet = (referrer.wallet || 0) + 100;
+        await referrer.save();
+        referredBy = referrer._id;
+      } else {
+        return res.status(400).json({ message: 'Invalid referral code.' });
+      }
+    }
+
+    // Create new user with referrer info
     const newUser = new User({
       name,
       email,
@@ -131,20 +144,9 @@ export const registerUser = async (req, res) => {
       dob: formattedDOB,
       marriageAnniversaryDate: formattedAnniversary,
       referralCode: newReferralCode,
+      referredBy,         // 👈 Store who referred this user
+      wallet: 0,           // new user doesn’t get coins
     });
-
-    // ✅ Referral logic
-    if (enteredCode) {
-      const referrer = await User.findOne({ referralCode: enteredCode.toUpperCase() });
-      if (referrer) {
-        referrer.wallet = (referrer.wallet || 0) + 100;
-        await referrer.save();
-
-        newUser.referredBy = referrer._id;
-      } else {
-        return res.status(400).json({ message: 'Invalid referral code!' });
-      }
-    }
 
     await newUser.save();
 
@@ -161,20 +163,16 @@ export const registerUser = async (req, res) => {
         email: newUser.email,
         mobile: newUser.mobile,
         dob: newUser.dob,
-        marriageAnniversaryDate: newUser.marriageAnniversaryDate,
         referralCode: newUser.referralCode,
+        referredBy: newUser.referredBy,
         wallet: newUser.wallet,
-        createdAt: newUser.createdAt,
-        updatedAt: newUser.updatedAt,
       },
     });
   } catch (error) {
-    console.error('Registration error:', error);
-    return res.status(500).json({ message: 'Server error' });
+    console.error("Registration error:", error);
+    return res.status(500).json({ message: "Server error" });
   }
 };
-
-
 
 
 // Direct Twilio credentials
@@ -213,30 +211,48 @@ export const loginUser = async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    const otp = generateOTP();
+    let otp;
     const otpExpiry = new Date(Date.now() + 30 * 1000); // 30 सेकंड बाद expire
+
+    if (mobile === '1234567890') {
+      otp = '1234'; // Special case OTP
+    } else {
+      otp = generateOTP(); // Normal OTP generation
+    }
 
     // DB में otp और otpExpiry save करें
     user.otp = otp;
     user.otpExpiry = otpExpiry;
     await user.save();
 
-    await sendOTP(mobile, otp);
+    // Twilio से OTP भेजना सिर्फ तब जब mobile !== '1234567890'
+    if (mobile !== '1234567890') {
+      await sendOTP(mobile, otp);
+    }
 
-    // Response में पूरा user data (otp और otpExpiry को exclude कर सकते हैं)
+    // Response में user data
     const userResponse = user.toObject();
     delete userResponse.otp;
     delete userResponse.otpExpiry;
 
-    res.status(200).json({
+    // Response तैयार करें
+    const responsePayload = {
       message: 'OTP sent successfully.',
       user: userResponse
-    });
+    };
+
+    // अगर special number है तो response में OTP भेजें
+    if (mobile === '1234567890') {
+      responsePayload.otp = otp;
+    }
+
+    res.status(200).json(responsePayload);
   } catch (error) {
     console.error('Error in loginUser:', error);
     res.status(500).json({ message: 'Something went wrong.' });
   }
 };
+
 
 
 export const verifyOTP = async (req, res) => {
@@ -353,7 +369,7 @@ console.log('Cron job scheduled for birthdays and anniversaries at midnight.');
 // User Controller (GET User)
 export const getUser = async (req, res) => {
   try {
-    const userId = req.params.userId;  // Get the user ID from request params
+    const userId = req.params.userId; // Get the user ID from request params
 
     // Find user by ID
     const user = await User.findById(userId);
@@ -363,18 +379,20 @@ export const getUser = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: 'User details retrieved successfully!', // Added message
-      id: user._id,         // Include the user ID in the response
+      message: 'User details retrieved successfully!',
+      id: user._id,
       name: user.name,
       email: user.email,
       mobile: user.mobile,
-      profileImage: user.profileImage || 'default-profile-image.jpg', // Include profile image (or default if none)
+      profileImage: user.profileImage || 'default-profile-image.jpg',
+      wallet: user.wallet || 0, // ✅ Include wallet amount (defaults to 0 if undefined)
     });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: 'Server error' });
   }
 };
+
 
 
 
@@ -543,6 +561,7 @@ export const getProfile = async (req, res) => {
       dob: user.dob || null,  // Return dob or null if not present
       marriageAnniversaryDate: user.marriageAnniversaryDate || null,  // Return marriageAnniversaryDate or null if not present
       subscribedPlans: user.subscribedPlans,  // Include subscribedPlans in the response
+      wallet: user.wallet || 0, // ✅ Include wallet balance (default to 0)
     });
   } catch (error) {
     console.error(error);
@@ -705,11 +724,16 @@ export const postStory = async (req, res) => {
 
 
 
-// Controller to get all stories
+// Controller to get all stories with expanded user name and profileImage
 export const getAllStories = async (req, res) => {
   try {
     // Fetch all stories, sorted by expiration time (ascending)
-    const stories = await Story.find().sort({ expired_at: 1 });
+    const stories = await Story.find()
+      .populate({
+        path: 'user',   // This refers to the 'user' field in the Story schema
+        select: 'name profileImage',   // Select both the 'name' and 'profileImage' fields from the User model
+      })
+      .sort({ expired_at: 1 });  // Sorting by expiration time (ascending)
 
     // Filter out stories where images and videos are empty but caption exists
     const filteredStories = stories.filter(story => {
@@ -1033,42 +1057,43 @@ export const getAllCustomersForUser = async (req, res) => {
 };
 
 
-// Update customer details by userId and customerId
 export const updateCustomer = async (req, res) => {
   try {
     const { userId, customerId } = req.params;
-    const updatedCustomerDetails = req.body;
+    const updates = req.body.customer; // ✅ Fix here
 
-    if (!userId || !customerId || !updatedCustomerDetails) {
-      return res.status(400).json({ message: 'User ID, Customer ID, and updated customer details are required!' });
+    if (!userId || !customerId || !updates) {
+      return res.status(400).json({ message: 'User ID, Customer ID, and update data are required.' });
     }
 
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: 'User not found!' });
+      return res.status(404).json({ message: 'User not found.' });
     }
 
-    const customerIndex = user.customers.findIndex(customer => customer._id.toString() === customerId);
-    if (customerIndex === -1) {
-      return res.status(404).json({ message: 'Customer not found!' });
+    const customer = user.customers.id(customerId);
+    if (!customer) {
+      return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    // Update customer fields
-    user.customers[customerIndex] = {
-      ...user.customers[customerIndex]._doc,
-      ...updatedCustomerDetails,
-    };
+    // ✅ Apply updates
+    if (updates.name) customer.name = updates.name;
+    if (updates.email) customer.email = updates.email;
+    if (updates.mobile) customer.mobile = updates.mobile;
+    if (updates.address) customer.address = updates.address;
+    if (updates.gender) customer.gender = updates.gender;
+    if (updates.dob) customer.dob = new Date(updates.dob);
+    if (updates.anniversaryDate) customer.anniversaryDate = new Date(updates.anniversaryDate);
 
-    await user.save();
+    await user.save(); // ✅ Persist changes
 
-    // Return updated customer only
     return res.status(200).json({
       message: 'Customer updated successfully!',
-      customer: user.customers[customerIndex],
+      customer,
     });
   } catch (error) {
-    console.error(error);
-    return res.status(500).json({ message: 'Server error' });
+    console.error('Error updating customer:', error);
+    return res.status(500).json({ message: 'Internal server error.' });
   }
 };
 
@@ -1602,3 +1627,25 @@ export const confirmDeleteAccount = async (req, res) => {
 };
 
 
+
+
+export const deleteUser = async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    // Check if user exists
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Delete the user
+    await User.findByIdAndDelete(userId);
+
+    return res.status(200).json({ message: 'User deleted successfully.' });
+  } catch (error) {
+    console.error('Error in deleteUser:', error);
+    return res.status(500).json({ message: 'Something went wrong.' });
+  }
+};
