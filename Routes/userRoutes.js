@@ -31,7 +31,9 @@ import {
      getUserWallet,
      deleteAccount,
      confirmDeleteAccount,
-     deleteUser
+     deleteUser,
+     addContactUs,
+     getAllContactUs
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -81,6 +83,9 @@ router.get('/wallet/:userId', getUserWallet);
 router.post('/deleteaccount', deleteAccount)
 router.get('/confirm-delete-account/:token', confirmDeleteAccount);
 router.delete('/delete-user/:userId', deleteUser);
+router.post('/contact-us/:userId', addContactUs);
+router.get('/getallcontactus', getAllContactUs);
+
 
 
 

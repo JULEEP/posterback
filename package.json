@@ -46,6 +46,7 @@
     "puppeteer": "^23.11.1",
     "puppeteer-core": "^23.11.1",
     "qrcode": "^1.5.4",
+    "razorpay": "^2.9.6",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "stream-to-buffer": "^0.1.0",

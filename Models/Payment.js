@@ -30,6 +30,9 @@ const paymentSchema = new mongoose.Schema(
     paymentResponse: {
       type: Object,
     },
+    transactionId: {
+  type: String,
+},
     paidAt: {
       type: Date,
     },

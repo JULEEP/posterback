@@ -20,6 +20,9 @@ import isSameOrAfter from 'dayjs/plugin/isSameOrAfter.js'; // ✅ note the ".js"
 dayjs.extend(isSameOrAfter);
 import moment from 'moment'; // Make sure to install: npm install moment
 import crypto from 'crypto';
+import ContactUs from '../Models/ContactUs.js';
+import customParseFormat from 'dayjs/plugin/customParseFormat.js';
+dayjs.extend(customParseFormat);
 
 
 import nodemailer from 'nodemailer';
@@ -306,7 +309,7 @@ Enjoy your special day!
     await client.messages.create({
       body: message,
       to: `+91${mobile}`,  // Indian mobile number format
-      from: 'YOUR_TWILIO_PHONE',  // Replace with your Twilio phone number
+      from: TWILIO_PHONE,  // Use your Twilio phone number
     });
     console.log(`Birthday wishes sent to ${mobile}`);
   } catch (error) {
@@ -329,7 +332,7 @@ Enjoy your special day!
     await client.messages.create({
       body: message,
       to: `+91${mobile}`,  // Indian mobile number format
-      from: 'YOUR_TWILIO_PHONE',  // Replace with your Twilio phone number
+      from: TWILIO_PHONE,  // Use your Twilio phone number
     });
     console.log(`Anniversary wishes sent to ${mobile}`);
   } catch (error) {
@@ -342,19 +345,20 @@ cron.schedule('0 0 * * *', async () => {
   console.log('Running cron job for birthday and anniversary wishes...');
 
   const today = new Date().toISOString().split('T')[0];  // Get today's date in YYYY-MM-DD format
+  const todayDDMM = today.slice(5);  // Extract the month and day (MM-DD)
 
-  // Find users with today's birthday
+  // Find users with today's birthday (match MM-DD)
   const birthdayUsers = await User.find({
-    dob: { $regex: today },  // Match the day and month of DOB (ignore year)
+    dob: { $regex: `^${todayDDMM}` },  // Match day and month (ignore year)
   });
 
   birthdayUsers.forEach(user => {
     sendBirthdaySMS(user.mobile);  // Send SMS to birthday users
   });
 
-  // Find users with today's marriage anniversary
+  // Find users with today's marriage anniversary (match MM-DD)
   const anniversaryUsers = await User.find({
-    marriageAnniversaryDate: { $regex: today },  // Match the day and month of the anniversary
+    marriageAnniversaryDate: { $regex: `^${todayDDMM}` },  // Match day and month (ignore year)
   });
 
   anniversaryUsers.forEach(user => {
@@ -363,7 +367,6 @@ cron.schedule('0 0 * * *', async () => {
 });
 
 console.log('Cron job scheduled for birthdays and anniversaries at midnight.');
-
 
 
 // User Controller (GET User)
@@ -1452,10 +1455,14 @@ export const showBirthdayWishOrCountdown = async (req, res) => {
       });
     }
 
-    const birthDate = dayjs(user.dob);
+    // ✅ Parse DOB using correct format
+    const birthDate = dayjs(user.dob, 'DD-MM-YYYY');
+    if (!birthDate.isValid()) {
+      return res.status(400).json({ message: 'Invalid DOB format' });
+    }
+
     let nextBirthday = birthDate.year(today.year());
 
-    // If birthday this year is already gone, set to next year
     if (nextBirthday.isBefore(today, 'day')) {
       nextBirthday = nextBirthday.add(1, 'year');
     }
@@ -1463,7 +1470,6 @@ export const showBirthdayWishOrCountdown = async (req, res) => {
     const isToday = nextBirthday.format('MM-DD') === today.format('MM-DD');
 
     if (isToday && today.hour() === 0) {
-      // Exactly 12 AM wish
       wishes.push(`🎉 It's 12:00 AM — Happy Birthday, ${name}! May your day be filled with happiness.`);
     } else if (isToday) {
       wishes.push(`🎉 Happy Birthday, ${name}! Wishing you joy and love.`);
@@ -1482,7 +1488,6 @@ export const showBirthdayWishOrCountdown = async (req, res) => {
     res.status(500).json({ error: 'Something went wrong' });
   }
 };
-
 
 
 export const getReferralCodeByUserId = async (req, res) => {
@@ -1647,5 +1652,49 @@ export const deleteUser = async (req, res) => {
   } catch (error) {
     console.error('Error in deleteUser:', error);
     return res.status(500).json({ message: 'Something went wrong.' });
+  }
+};
+
+
+export const addContactUs = async (req, res) => {
+  try {
+    const userId = req.params.userId;  // Get the userId from the URL parameter
+    const { name, email, phone, message } = req.body;
+
+    // Create a new contact message
+    const newContactUs = new ContactUs({
+      userId,
+      name,
+      email,
+      phone,
+      message,
+    });
+
+    // Save the contact message to the database
+    await newContactUs.save();
+
+    res.status(201).json({
+      message: 'Thank you for reaching out! We have received your details and will connect with you shortly.',
+      contactUs: newContactUs,
+    });
+  } catch (error) {
+    console.error('Error adding Contact Us message:', error);
+    res.status(500).json({ message: 'Something went wrong while adding message!' });
+  }
+};
+
+
+export const getAllContactUs = async (req, res) => {
+  try {
+    // Fetch all contact messages from the database
+    const contactMessages = await ContactUs.find().sort({ createdAt: -1 });
+
+    res.status(200).json({
+      message: 'Contact Us messages fetched successfully!',
+      contactUsMessages: contactMessages,
+    });
+  } catch (error) {
+    console.error('Error fetching Contact Us messages:', error);
+    res.status(500).json({ message: 'Something went wrong while fetching messages!' });
   }
 };

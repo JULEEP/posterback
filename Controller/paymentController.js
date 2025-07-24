@@ -8,18 +8,17 @@ import Plan from '../Models/Plan.js';
 import User from '../Models/User.js';
 import Payment from '../Models/Payment.js';
 import { v4 as uuidv4 } from 'uuid';
+import Razorpay from 'razorpay';
 
-// ✅ Init: PhonePe client with UAT (test) credentials
-const client = StandardCheckoutClient.getInstance(
-  "TEST-M22HFU8UDDBYR_25051", // ✅ Test Merchant ID
-  "MjcxNTAxYjAtZjA1Ny00YmQwLTg3YTktMGIyOTNmMjIzNmMz", // ✅ Test Salt Key
-  1, // ✅ Salt Index
-  Env.UAT // ✅ Use Test Mode
-);
 
-export const payWithPhonePe = async (req, res) => {
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_BxtRNvflG06PTV',
+  key_secret: process.env.RAZORPAY_KEY_SECRET || 'RecEtdcenmR7Lm4AIEwo4KFr',
+});
+
+export const payWithRazorpay = async (req, res) => {
   try {
-    const { userId, planId } = req.body;
+    const { userId, planId, transactionId } = req.body;
 
     // ✅ Validate user
     const user = await User.findById(userId);
@@ -35,34 +34,48 @@ export const payWithPhonePe = async (req, res) => {
       offerPrice = Math.max(offerPrice - 100, 0); // Prevent negative amounts
     }
 
-    const amount = offerPrice * 100; // Convert to paise
+    const amount = offerPrice;
     const merchantOrderId = `txn_${uuidv4()}`;
 
-    // ✅ Prepare PhonePe payment request
-    const request = StandardCheckoutPayRequest.builder()
-      .merchantOrderId(merchantOrderId)
-      .amount(amount)
-      .build();
+    // 🔍 Fetch Razorpay payment
+    let paymentInfo = await razorpay.payments.fetch(transactionId);
+    if (!paymentInfo) {
+      return res.status(404).json({ message: "Payment not found" });
+    }
 
-    const response = await client.pay(request);
+    // 💳 Capture if authorized
+    if (paymentInfo.status === "authorized") {
+      try {
+        await razorpay.payments.capture(transactionId, amount * 100, "INR");
+        paymentInfo = await razorpay.payments.fetch(transactionId); // refresh
+      } catch (err) {
+        console.error("❌ Payment capture failed:", err);
+        return res.status(500).json({ message: "Payment capture failed" });
+      }
+    }
+
+    if (paymentInfo.status !== "captured") {
+      return res.status(400).json({ message: `Payment not captured. Status: ${paymentInfo.status}` });
+    }
 
     // 💾 Save payment record
     await Payment.create({
       merchantOrderId,
       userId: user._id,
       plan: plan._id,
-      amount,
+      amount: amount * 100,
       currency: "INR",
-      status: "INITIATED",
-      paymentResponse: response,
+      status: "captured",
+      paymentResponse: paymentInfo,
+      transactionId
     });
 
-    // 📅 Calculate subscription duration
+    // 📅 Set subscription duration
     const startDate = new Date();
     const endDate = new Date();
-    endDate.setFullYear(endDate.getFullYear() + 1);
+    endDate.setFullYear(endDate.getFullYear() + 1); // 1-year subscription
 
-    // 👇 Push the plan into the user's subscription array
+    // 🧾 Add subscription to user
     user.subscribedPlans.push({
       planId: plan._id,
       name: plan.name,
@@ -77,24 +90,25 @@ export const payWithPhonePe = async (req, res) => {
 
     await user.save();
 
+    // 🗓️ Format function
     const formatDate = (date) => {
       const d = new Date(date);
       return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
     };
 
-    // ✅ Send success response
+    // ✅ Return final response
     res.status(200).json({
       success: true,
-      message: "Payment initiated and plan added to user",
+      message: "Payment successful and plan added to user",
       merchantOrderId,
-      response,
+      transactionId,
       amount,
       currency: "INR",
       plan: {
         id: plan._id,
         name: plan.name,
         originalPrice: plan.originalPrice,
-        offerPrice: offerPrice,
+        offerPrice,
         discountPercentage: plan.discountPercentage,
         duration: plan.duration,
         startDate: formatDate(startDate),
@@ -110,10 +124,10 @@ export const payWithPhonePe = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ PhonePe SDK error:", error);
+    console.error("❌ Razorpay payment error:", error);
     res.status(500).json({
       success: false,
-      message: "PhonePe payment error",
+      message: "Razorpay payment failed",
       error: error.message || "Something went wrong",
     });
   }
