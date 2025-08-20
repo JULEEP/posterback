@@ -105,6 +105,15 @@ referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }
     type: Schema.Types.ObjectId,
     ref: 'Poster'  // This references the 'Poster' model
   }],
+  isReported: {
+  type: Boolean,
+  default: false
+},
+isBlocked: { type: Boolean, default: false }, // ✅ Add this
+reportedBy: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'User'
+}],
 }, {
   timestamps: true  // CreatedAt and UpdatedAt fields automatically
 });

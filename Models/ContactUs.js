@@ -21,6 +21,10 @@ const contactUsSchema = new mongoose.Schema(
     message: {
       type: String,
     },
+      requestPoster: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true, // automatically adds createdAt and updatedAt fields

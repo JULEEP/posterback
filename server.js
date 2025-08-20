@@ -18,8 +18,15 @@ import cloudinary from './config/cloudinary.js';
 import fileUpload from 'express-fileupload';
 import cron from 'node-cron';
 import { sendBirthdaySMS, sendAnniversarySMS } from './Controller/UserController.js';  // Import functions directly
+import { Blob, File } from 'buffer';
+
+global.Blob = Blob;
+global.File = File;
+
+
 
 dotenv.config();
+console.log('🔍 Loaded MONGO_URI:', process.env.MONGO_URI);
 
 const app = express();
 
@@ -32,7 +39,7 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use(cors({
-  origin: ['http://localhost:3000', 'https://posterbnaoadmin.vercel.app', 'http://194.164.148.244:3000', 'http://194.164.148.244:3079', 'https://posterbnaoweb.vercel.app'],
+  origin: ['http://localhost:3000', 'https://posterbnaoadmin.vercel.app', 'http://194.164.148.244:3000', 'http://194.164.148.244:3079', 'https://posterbnaoweb.vercel.app', 'http://localhost:3002', 'https://ezystudio-zu8y.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
@@ -47,33 +54,48 @@ app.use(cookieParser());
 connectDatabase();
 
 
-// Cron job to check for birthdays and anniversaries at 12 AM
+// Run every day at midnight (12:00 AM)
 cron.schedule('0 0 * * *', async () => {
-  console.log('Running cron job for birthday and anniversary wishes...');
+  console.log('🔔 Running birthday/anniversary SMS cron...');
 
-  const today = new Date().toISOString().split('T')[0];  // Get today's date in YYYY-MM-DD format
+  const now = new Date();
+  const todayDay = now.getDate();         // e.g., 29
+  const todayMonth = now.getMonth() + 1;  // e.g., July is 6 + 1 = 7
 
-  // Find users with today's birthday
-  const birthdayUsers = await User.find({
-    dob: { $regex: today },  // Match the day and month of DOB (ignore year)
-  });
+  try {
+    // 🎂 Birthday matches
+    const birthdayUsers = await User.find({
+      $expr: {
+        $and: [
+          { $eq: [{ $dayOfMonth: '$dob' }, todayDay] },
+          { $eq: [{ $month: '$dob' }, todayMonth] }
+        ]
+      }
+    });
 
-  birthdayUsers.forEach(user => {
-    sendBirthdaySMS(user.mobile);  // Send SMS to birthday users
-  });
+    for (const user of birthdayUsers) {
+      await sendBirthdaySMS(user.mobile);
+    }
 
-  // Find users with today's marriage anniversary
-  const anniversaryUsers = await User.find({
-    marriageAnniversaryDate: { $regex: today },  // Match the day and month of the anniversary
-  });
+    // 💍 Anniversary matches
+    const anniversaryUsers = await User.find({
+      $expr: {
+        $and: [
+          { $eq: [{ $dayOfMonth: '$marriageAnniversaryDate' }, todayDay] },
+          { $eq: [{ $month: '$marriageAnniversaryDate' }, todayMonth] }
+        ]
+      }
+    });
 
-  anniversaryUsers.forEach(user => {
-    sendAnniversarySMS(user.mobile);  // Send SMS to anniversary users
-  });
+    for (const user of anniversaryUsers) {
+      await sendAnniversarySMS(user.mobile);
+    }
+
+    console.log('✅ Birthday & anniversary SMS sent successfully.');
+  } catch (err) {
+    console.error('❌ Cron job failed:', err);
+  }
 });
-
-console.log('Cron job scheduled for birthdays and anniversaries at midnight.');
-
 
 
 // Middleware to handle file uploads
@@ -115,6 +137,6 @@ app.use('/api/payment', paymentRoutes); // So your route becomes /api/payment/ph
 const port = process.env.PORT || 6002;
 
 app.listen(port, '0.0.0.0', () => {
-console.log(`🚀 Server is up and running at: http://localhost:${port}`);
+console.log(`🚀 Server is up and running at: http://0.0.0.0:${port}`);
 });
 

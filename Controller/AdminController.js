@@ -12,6 +12,7 @@ import cloudinary from "../config/cloudinary.js";
 import Poster from "../Models/Poster.js";
 import Category from '../Models/Category.js'
 import Banner from '../Models/Banner.js'
+import WalletRedemption from "../Models/WalletRedemption.js";
 
 
 
@@ -761,6 +762,105 @@ export const logoutAdmin = (req, res) => {
     res.status(500).json({ error: "Logout error", details: err.message });
   }
 };
+
+
+export const getReportedUsers = async (req, res) => {
+  try {
+    const reportedUsers = await User.find({ isReported: true })
+      .populate('reportedBy', 'name email') // populate reporter info if needed
+      .select('-password'); // exclude password for security
+
+    if (reportedUsers.length === 0) {
+      return res.status(404).json({ message: 'No reported users found.' });
+    }
+
+    res.status(200).json({
+      message: 'Reported users fetched successfully.',
+      users: reportedUsers,
+    });
+  } catch (error) {
+    console.error('Error fetching reported users:', error);
+    res.status(500).json({ message: 'Internal server error', error: error.message });
+  }
+};
+
+
+// Admin: Block or Unblock a reported user
+export const blockReportedUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { block } = req.body; // Expecting true to block, false to unblock
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID is required." });
+    }
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    if (typeof block !== "boolean") {
+      return res.status(400).json({ message: "Block status (true/false) is required in the request body." });
+    }
+
+    // If status is already the same, no update needed
+    if (user.isBlocked === block) {
+      return res.status(409).json({ message: `User is already ${block ? "blocked" : "unblocked"}.` });
+    }
+
+    user.isBlocked = block;
+    await user.save();
+
+    res.status(200).json({
+      message: `User has been ${block ? "blocked" : "unblocked"} successfully.`,
+      userId: user._id,
+      isBlocked: user.isBlocked
+    });
+
+  } catch (error) {
+    console.error("Error updating block status:", error);
+    res.status(500).json({ message: "Internal server error", error: error.message });
+  }
+};
+
+
+// ✅ Admin approves or rejects
+export const updateRedemptionStatus = async (req, res) => {
+  try {
+    const { redemptionId } = req.params;
+    const { status } = req.body;
+
+    const redemption = await WalletRedemption.findById(redemptionId).populate('user');
+    if (!redemption) return res.status(404).json({ message: "Redemption not found" });
+
+    if (status === 'Completed') {
+      // Set user wallet to 0
+      await User.findByIdAndUpdate(redemption.user._id, { wallet: 0 });
+    }
+
+    redemption.status = status;
+    await redemption.save();
+
+    return res.status(200).json({ message: `Redemption marked as ${status}`, redemption });
+  } catch (err) {
+    console.error("Redemption status update error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// ✅ Admin: get all redemption requests
+export const getAllRedemptionRequests = async (req, res) => {
+  try {
+    const requests = await WalletRedemption.find().populate('user', 'name email mobile').sort({ createdAt: -1 });
+    return res.status(200).json({ requests });
+  } catch (err) {
+    console.error("Fetching redemptions failed:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 
 
 

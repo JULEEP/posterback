@@ -12,75 +12,87 @@ import Razorpay from 'razorpay';
 
 
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_BxtRNvflG06PTV',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || 'RecEtdcenmR7Lm4AIEwo4KFr',
+ key_id: 'rzp_live_QbfofYHBZgtn7V',
+ key_secret: 'pPCBFrLelXZZ1d6lrT41wVkR',
 });
 
 export const payWithRazorpay = async (req, res) => {
   try {
     const { userId, planId, transactionId } = req.body;
 
-    // ✅ Validate user
+    // Validate user
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-    // ✅ Validate plan
+    // Validate plan
     const plan = await Plan.findById(planId);
-    if (!plan) return res.status(404).json({ message: "Plan not found" });
+    if (!plan) return res.status(404).json({ success: false, message: "Plan not found" });
 
-    // 💰 Apply referral discount if user was referred
-    let offerPrice = plan.offerPrice;
-    if (user.referredBy) {
-      offerPrice = Math.max(offerPrice - 100, 0); // Prevent negative amounts
+    let offerPrice = plan.offerPrice ?? plan.originalPrice ?? 0;
+    if (user.referredBy && offerPrice > 100) offerPrice -= 100;
+
+    const amount = Number(offerPrice);
+    if (isNaN(amount) || amount < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid amount for payment. Must be at least ₹1.",
+      });
     }
 
-    const amount = offerPrice;
+    console.log("Final computed amount (₹):", amount);
+
     const merchantOrderId = `txn_${uuidv4()}`;
 
-    // 🔍 Fetch Razorpay payment
     let paymentInfo = await razorpay.payments.fetch(transactionId);
-    if (!paymentInfo) {
-      return res.status(404).json({ message: "Payment not found" });
-    }
+    if (!paymentInfo) return res.status(404).json({ success: false, message: "Payment not found" });
 
-    // 💳 Capture if authorized
-    if (paymentInfo.status === "authorized") {
+    // Force capture if not captured and not refunded
+    if (paymentInfo.status === "authorized" || paymentInfo.status === "created" || paymentInfo.status === "failed") {
       try {
-        await razorpay.payments.capture(transactionId, amount * 100, "INR");
-        paymentInfo = await razorpay.payments.fetch(transactionId); // refresh
+        await razorpay.payments.capture(transactionId, Math.round(amount * 100), "INR");
+        paymentInfo = await razorpay.payments.fetch(transactionId); // refresh after capture
       } catch (err) {
-        console.error("❌ Payment capture failed:", err);
-        return res.status(500).json({ message: "Payment capture failed" });
+        console.error("Payment capture failed:", err);
+        return res.status(500).json({ success: false, message: "Payment capture failed" });
       }
     }
 
-    if (paymentInfo.status !== "captured") {
-      return res.status(400).json({ message: `Payment not captured. Status: ${paymentInfo.status}` });
+    // If payment is refunded, still proceed but warn
+    if (paymentInfo.status === "refunded") {
+      console.warn("Warning: Payment has been refunded but proceeding with plan activation.");
     }
 
-    // 💾 Save payment record
+    // If payment still not captured, return error
+    if (paymentInfo.status !== "captured") {
+      return res.status(400).json({
+        success: false,
+        message: `Payment not captured. Status: ${paymentInfo.status}`,
+      });
+    }
+
+    // Save payment record
     await Payment.create({
       merchantOrderId,
       userId: user._id,
       plan: plan._id,
-      amount: amount * 100,
+      amount: Math.round(amount * 100),
       currency: "INR",
       status: "captured",
       paymentResponse: paymentInfo,
-      transactionId
+      transactionId,
     });
 
-    // 📅 Set subscription duration
+    // Set subscription dates (1 year)
     const startDate = new Date();
     const endDate = new Date();
-    endDate.setFullYear(endDate.getFullYear() + 1); // 1-year subscription
+    endDate.setFullYear(endDate.getFullYear() + 1);
 
-    // 🧾 Add subscription to user
+    // Add plan to user
     user.subscribedPlans.push({
       planId: plan._id,
       name: plan.name,
       originalPrice: plan.originalPrice,
-      offerPrice: offerPrice,
+      offerPrice,
       discountPercentage: plan.discountPercentage,
       duration: plan.duration,
       startDate,
@@ -90,13 +102,22 @@ export const payWithRazorpay = async (req, res) => {
 
     await user.save();
 
-    // 🗓️ Format function
+    // Referral wallet credit
+    if (user.referredBy) {
+      const referrer = await User.findById(user.referredBy);
+      if (referrer) {
+        referrer.wallet = (referrer.wallet || 0) + 200;
+        await referrer.save();
+      }
+    }
+
+    // Date formatting helper
     const formatDate = (date) => {
       const d = new Date(date);
       return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
     };
 
-    // ✅ Return final response
+    // Final success response
     res.status(200).json({
       success: true,
       message: "Payment successful and plan added to user",
@@ -124,7 +145,7 @@ export const payWithRazorpay = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("❌ Razorpay payment error:", error);
+    console.error("Razorpay payment error:", error);
     res.status(500).json({
       success: false,
       message: "Razorpay payment failed",
@@ -133,6 +154,27 @@ export const payWithRazorpay = async (req, res) => {
   }
 };
 
+export const getAllPayments = async (req, res) => {
+  try {
+    const payments = await Payment.find()
+      .populate('userId', 'name email phone')    // user ke selected fields populate karenge
+      .populate('plan', 'name originalPrice offerPrice duration') // plan ke kuch fields bhi populate karenge
+      .sort({ createdAt: -1 });                   // recent payments pehle
+
+    res.status(200).json({
+      success: true,
+      count: payments.length,
+      payments,
+    });
+  } catch (error) {
+    console.error("❌ Error fetching payments:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch payments",
+      error: error.message || "Something went wrong",
+    });
+  }
+};
 
 // ✅ 2. Handle Payment Callback
 export const phonePeCallbackHandler = async (req, res) => {

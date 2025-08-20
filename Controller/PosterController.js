@@ -258,10 +258,18 @@ export const deletePoster = async (req, res) => {
   
 export const getAllPosters = async (req, res) => {
   try {
-    // Fetch all posters, sorted by creation date in descending order
     let posters = await Poster.find().sort({ createdAt: -1 });
 
-    // Send the posters with all fields (including price)
+    // Map posters to adjust `images` field
+    posters = posters.map(poster => {
+      const posterImageUrl = poster.posterImage?.url || null;
+
+      return {
+        ...poster.toObject(),  // convert Mongoose doc to plain JS object
+        images: posterImageUrl ? [posterImageUrl] : [],
+      };
+    });
+
     res.status(200).json(posters);
   } catch (error) {
     console.error("Error fetching posters:", error);
@@ -280,10 +288,20 @@ export const getPostersByCategory = async (req, res) => {
       return res.status(400).json({ message: 'categoryName is required' });
     }
 
-    const posters = await Poster.find({ categoryName }).sort({ createdAt: -1 });
+    let posters = await Poster.find({ categoryName }).sort({ createdAt: -1 });
+
+    posters = posters.map(poster => {
+      const posterImageUrl = poster.posterImage?.url || null;
+
+      return {
+        ...poster.toObject(),
+        images: posterImageUrl ? [posterImageUrl] : [],
+      };
+    });
 
     res.status(200).json(posters);
   } catch (error) {
+    console.error("Error fetching posters by categoryName:", error);
     res.status(500).json({ message: 'Error fetching posters by categoryName', error });
   }
 };
@@ -362,17 +380,28 @@ export const getPostersByFestivalDates = async (req, res) => {
       return res.status(400).json({ message: "Festival date is required" });
     }
 
-    const posters = await Poster.find({ festivalDate }).sort({ createdAt: -1 });
+    let posters = await Poster.find({ festivalDate }).sort({ createdAt: -1 });
 
     if (posters.length === 0) {
       return res.status(404).json({ message: "No posters found for this festival date" });
     }
+
+    // Map posters to add images array from posterImage.url
+    posters = posters.map(poster => {
+      const posterImageUrl = poster.posterImage?.url || null;
+
+      return {
+        ...poster.toObject(),
+        images: posterImageUrl ? [posterImageUrl] : [],
+      };
+    });
 
     res.status(200).json(posters);
   } catch (error) {
     res.status(500).json({ message: "Error fetching posters", error });
   }
 };
+
 
 
 export const Postercreate = async (req, res) => {
@@ -611,104 +640,141 @@ const generatePreviewImage = async (bgUrl, overlayUrls = [], overlaySettings = {
 export const canvasCreatePoster = async (req, res) => {
   try {
     const {
-      name, categoryName, price, description,
-      size, festivalDate, inStock, tags,
-      email, mobile, title,
-      textSettings, overlaySettings
+      name, 
+      categoryName, 
+      festivalDate, 
+      description, 
+      tags,
+      email, 
+      mobile, 
+      title,
+      designData
     } = req.body;
 
-    if (!req.files || !req.files.bgImage) {
-      return res.status(400).json({ message: 'Background image is required' });
-    }
-
-    const bgFile = Array.isArray(req.files.bgImage) ? req.files.bgImage[0] : req.files.bgImage;
-    const bgUploadResult = await cloudinary.uploader.upload(bgFile.tempFilePath, {
-      folder: 'posters/backgrounds'
-    });
-    const bgImageUrl = bgUploadResult.secure_url;
-
-    let overlayImages = [];
-    if (req.files.images) {
-      overlayImages = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
-    }
-
-    const uploadedOverlayUrls = [];
-    for (const imgFile of overlayImages) {
-      const result = await cloudinary.uploader.upload(imgFile.tempFilePath, {
-        folder: 'posters/overlays'
+    if (!req.files || !req.files.posterImage) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Poster image is required' 
       });
-      uploadedOverlayUrls.push(result.secure_url);
     }
 
-    const parsedTextSettings = textSettings ? JSON.parse(textSettings) : {};
-    const parsedOverlaySettings = overlaySettings ? JSON.parse(overlaySettings) : {};
+    // Parse designData if it's a JSON string
+    const designDataParsed = typeof designData === 'string' ? JSON.parse(designData) : designData;
 
-    // Generate preview with overlays and shapes rendered using positions
-    const previewImageUrl = await generatePreviewImage(bgImageUrl, uploadedOverlayUrls, parsedOverlaySettings, {
-      ...parsedTextSettings,
-      name,
-      email,
-      mobile
+    // Upload final poster image
+    const posterFile = req.files.posterImage;
+    const posterUpload = await cloudinary.uploader.upload(posterFile.tempFilePath, {
+      folder: 'posters/final',
+      quality: 'auto:good',
+      format: 'jpg'
     });
 
+    // Upload bgImage if provided
+    let bgImageData = null;
+    if (req.files.bgImage) {
+      const bgUpload = await cloudinary.uploader.upload(req.files.bgImage.tempFilePath, {
+        folder: 'posters/bg'
+      });
+      bgImageData = {
+        url: bgUpload.secure_url,
+        publicId: bgUpload.public_id
+      };
+    }
+
+    // Upload multiple overlayImages if provided
+    let overlayImagesData = [];
+    if (req.files.overlayImages) {
+      const overlayFiles = Array.isArray(req.files.overlayImages) 
+        ? req.files.overlayImages 
+        : [req.files.overlayImages];
+
+      for (const file of overlayFiles) {
+        const overlayUpload = await cloudinary.uploader.upload(file.tempFilePath, {
+          folder: 'posters/overlay'
+        });
+        overlayImagesData.push({
+          url: overlayUpload.secure_url,
+          publicId: overlayUpload.public_id
+        });
+      }
+    }
+
+    // Create new Poster document
     const newPoster = new Poster({
       name,
       categoryName,
-      price,
-      description,
-      size,
-      festivalDate,
-      inStock,
+      festivalDate: festivalDate || undefined,
+      description: description || undefined,
       tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
-      email,
-      mobile,
-      title,
-      textSettings: parsedTextSettings,
-      overlaySettings: parsedOverlaySettings,
-      images: uploadedOverlayUrls,
-      backgroundImage: bgImageUrl,
-      previewImage: previewImageUrl
+      email: email || undefined,
+      mobile: mobile || undefined,
+      title: title || undefined,
+      posterImage: {
+        url: posterUpload.secure_url,
+        publicId: posterUpload.public_id
+      },
+      designData: {
+        bgImage: bgImageData,
+        overlayImages: overlayImagesData,  // note plural here
+        bgImageSettings: designDataParsed?.bgImageSettings || {},
+        overlaySettings: designDataParsed?.overlaySettings || { overlays: [] },
+        textSettings: designDataParsed?.textSettings || {},
+        textStyles: designDataParsed?.textStyles || {},
+        textVisibility: designDataParsed?.textVisibility || {},
+        overlayImageFilters: designDataParsed?.overlayImageFilters || []
+      },
+      createdAt: new Date(),
+      updatedAt: new Date()
     });
 
     await newPoster.save();
 
-    res.status(201).json({
+    return res.status(201).json({
+      success: true,
       message: 'Poster created successfully',
       poster: {
         _id: newPoster._id,
         name: newPoster.name,
         categoryName: newPoster.categoryName,
-        price: newPoster.price,
-        description: newPoster.description,
-        size: newPoster.size,
         festivalDate: newPoster.festivalDate,
-        inStock: newPoster.inStock,
+        description: newPoster.description,
         tags: newPoster.tags,
         email: newPoster.email,
         mobile: newPoster.mobile,
         title: newPoster.title,
-        textSettings: newPoster.textSettings,
-        overlaySettings: newPoster.overlaySettings, // <-- includes positions & shapes
-        images: newPoster.images,
-        backgroundImage: newPoster.backgroundImage,
-        previewImage: newPoster.previewImage,
-        createdAt: newPoster.createdAt,
-        updatedAt: newPoster.updatedAt
+        posterImage: newPoster.posterImage.url,
+        createdAt: newPoster.createdAt
       }
     });
 
   } catch (error) {
     console.error('Error creating poster:', error);
-    res.status(500).json({ message: 'Error creating poster', error: error.message });
+    return res.status(500).json({ 
+      success: false,
+      message: 'Error creating poster', 
+      error: error.message 
+    });
   }
 };
 
 
 
 
+
 export const getAllCanvasPosters = async (req, res) => {
   try {
-    const posters = await Poster.find().sort({ createdAt: -1 }); // newest first
+    let posters = await Poster.find().sort({ createdAt: -1 }); // newest first
+
+    // Map posters to adjust `images` field
+    posters = posters.map(poster => {
+      const posterImageUrl = poster.posterImage?.url || null;
+
+      return {
+        ...poster.toObject(),
+        images: posterImageUrl ? [posterImageUrl] : [],
+      };
+    });
+
     res.status(200).json({
       message: 'All canvas posters fetched successfully',
       posters,
@@ -718,6 +784,7 @@ export const getAllCanvasPosters = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
 
 
 
@@ -732,15 +799,23 @@ export const getSingleCanvasPoster = async (req, res) => {
       return res.status(404).json({ message: 'Poster not found' });
     }
 
+    const posterImageUrl = poster.posterImage?.url || null;
+
+    const posterObj = {
+      ...poster.toObject(),
+      images: posterImageUrl ? [posterImageUrl] : [],
+    };
+
     res.status(200).json({
       message: 'Canvas poster fetched successfully',
-      poster,
+      poster: posterObj,
     });
   } catch (error) {
     console.error('❌ Error fetching canvas poster:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
+
 
 
 export const createBanner = async (req, res) => {

@@ -29,6 +29,10 @@ import {
     deleteAboutUsById,
     updateContactMessageById,
     deleteContactMessageById,
+    getReportedUsers,
+    blockReportedUser,
+    updateRedemptionStatus,
+    getAllRedemptionRequests,
 } from "../Controller/AdminController.js";
 
 const router = express.Router();
@@ -62,6 +66,12 @@ router.post('/login', loginAdmin);
 router.get('/profile/:adminId', getAdminProfile);
 router.put('/updateprofile/:adminId', updateAdminProfile);
 router.post('/logout', logoutAdmin);
+router.get('/getallreporteduser', getReportedUsers);
+// Only accessible by admin middleware
+router.put('/block-user/:userId', blockReportedUser);
+router.put("/update-status/:redemptionId", updateRedemptionStatus);
+router.get("/getredemption-requests", getAllRedemptionRequests);
+
 
 
 

@@ -22,10 +22,14 @@ import moment from 'moment'; // Make sure to install: npm install moment
 import crypto from 'crypto';
 import ContactUs from '../Models/ContactUs.js';
 import customParseFormat from 'dayjs/plugin/customParseFormat.js';
+import WalletRedemption from '../Models/WalletRedemption.js';
 dayjs.extend(customParseFormat);
 
 
 import nodemailer from 'nodemailer';
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+
 
 
 
@@ -110,7 +114,7 @@ export const registerUser = async (req, res) => {
       ? moment(marriageAnniversaryDate, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY')
       : null;
 
-    // Check duplicate
+    // Check duplicate email or mobile
     const existingUser = await User.findOne({ $or: [{ email }, { mobile }] });
     if (existingUser) {
       return res.status(400).json({ message: 'User with this email or mobile already exists!' });
@@ -125,21 +129,17 @@ export const registerUser = async (req, res) => {
       if (!exists) isUnique = true;
     }
 
+    // Validate referral code but do NOT credit wallet here
     let referredBy = null;
-
-    // If referral code entered → credit 100 to that user's wallet
     if (enteredCode) {
       const referrer = await User.findOne({ referralCode: enteredCode.toUpperCase() });
-      if (referrer) {
-        referrer.wallet = (referrer.wallet || 0) + 100;
-        await referrer.save();
-        referredBy = referrer._id;
-      } else {
+      if (!referrer) {
         return res.status(400).json({ message: 'Invalid referral code.' });
       }
+      referredBy = referrer._id;
     }
 
-    // Create new user with referrer info
+    // Create new user without wallet credit
     const newUser = new User({
       name,
       email,
@@ -147,8 +147,8 @@ export const registerUser = async (req, res) => {
       dob: formattedDOB,
       marriageAnniversaryDate: formattedAnniversary,
       referralCode: newReferralCode,
-      referredBy,         // 👈 Store who referred this user
-      wallet: 0,           // new user doesn’t get coins
+      referredBy, // store referrer info only
+      wallet: 0, // no coins initially
     });
 
     await newUser.save();
@@ -176,7 +176,6 @@ export const registerUser = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
-
 
 // Direct Twilio credentials
 const TWILIO_SID = 'ACd37d269a71fda78661c1fd2a54a5b567';
@@ -214,37 +213,41 @@ export const loginUser = async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    let otp;
-    const otpExpiry = new Date(Date.now() + 30 * 1000); // 30 सेकंड बाद expire
-
-    if (mobile === '1234567890') {
-      otp = '1234'; // Special case OTP
-    } else {
-      otp = generateOTP(); // Normal OTP generation
+    // ✅ Check if user is blocked
+    if (user.isBlocked) {
+      return res.status(403).json({ message: 'You have been blocked by the admin. Please contact support.' });
     }
 
-    // DB में otp और otpExpiry save करें
+    let otp;
+    const otpExpiry = new Date(Date.now() + 30 * 1000); // 30 seconds expiry
+
+    if (mobile === '1234567890') {
+      otp = '1234'; // Test OTP
+    } else {
+      otp = generateOTP(); // Your custom OTP generation
+    }
+
+    // Save OTP and expiry to DB
     user.otp = otp;
     user.otpExpiry = otpExpiry;
     await user.save();
 
-    // Twilio से OTP भेजना सिर्फ तब जब mobile !== '1234567890'
+    // Send OTP via Twilio or other service
     if (mobile !== '1234567890') {
       await sendOTP(mobile, otp);
     }
 
-    // Response में user data
+    // Prepare response
     const userResponse = user.toObject();
     delete userResponse.otp;
     delete userResponse.otpExpiry;
 
-    // Response तैयार करें
     const responsePayload = {
       message: 'OTP sent successfully.',
-      user: userResponse
+      user: userResponse,
     };
 
-    // अगर special number है तो response में OTP भेजें
+    // Include OTP in response for test mobile
     if (mobile === '1234567890') {
       responsePayload.otp = otp;
     }
@@ -255,6 +258,58 @@ export const loginUser = async (req, res) => {
     res.status(500).json({ message: 'Something went wrong.' });
   }
 };
+
+
+export const resendOTP = async (req, res) => {
+  const { mobile } = req.body;
+
+  try {
+    const user = await User.findOne({ mobile });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    let otp;
+    const otpExpiry = new Date(Date.now() + 30 * 1000); // 30 seconds expiry
+
+    if (mobile === '1234567890') {
+      otp = '1234'; // Special testing OTP
+    } else {
+      otp = generateOTP();
+    }
+
+    user.otp = otp;
+    user.otpExpiry = otpExpiry;
+    await user.save();
+
+    // Twilio se OTP tabhi bhejein jab testing number nahi hai
+    if (mobile !== '1234567890') {
+      await sendOTP(mobile, otp, true);  // true means it's a resend
+    }
+
+    const userResponse = user.toObject();
+    delete userResponse.otp;
+    delete userResponse.otpExpiry;
+
+    const responsePayload = {
+      message: 'OTP resent successfully.',
+      user: userResponse,
+    };
+
+    if (mobile === '1234567890') {
+      responsePayload.otp = otp;
+    }
+
+    res.status(200).json(responsePayload);
+  } catch (error) {
+    console.error('Error in resendOTP:', error);
+    res.status(500).json({ message: 'Failed to resend OTP.', error: error.message });
+  }
+};
+
+
+
 
 
 
@@ -788,6 +843,48 @@ export const getUserStories = async (req, res) => {
   } catch (error) {
     console.error("Error fetching user's stories:", error);
     res.status(500).json({ message: "Something went wrong!", error });
+  }
+};
+
+
+
+// Report another user
+export const reportUser = async (req, res) => {
+  try {
+    const { reporterId, reportedUserId } = req.params;
+
+    if (!reporterId || !reportedUserId) {
+      return res.status(400).json({ message: "Both reporterId and reportedUserId are required." });
+    }
+
+    if (reporterId === reportedUserId) {
+      return res.status(400).json({ message: "You cannot report yourself." });
+    }
+
+    const reportedUser = await User.findById(reportedUserId);
+
+    if (!reportedUser) {
+      return res.status(404).json({ message: "Reported user not found." });
+    }
+
+    if (reportedUser.reportedBy?.includes(reporterId)) {
+      return res.status(409).json({ message: "You have already reported this user." });
+    }
+
+    reportedUser.isReported = true;
+    reportedUser.reportedBy.push(reporterId);
+
+    await reportedUser.save();
+
+    res.status(200).json({
+      message: "User reported successfully.",
+      reportedUserId: reportedUser._id,
+      isReported: reportedUser.isReported,
+    });
+
+  } catch (error) {
+    console.error("Error reporting user:", error);
+    res.status(500).json({ message: "Failed to report user", error: error.message });
   }
 };
 
@@ -1448,38 +1545,62 @@ export const showBirthdayWishOrCountdown = async (req, res) => {
     const name = user.name || 'User';
     const wishes = [];
 
-    if (!user.dob) {
-      return res.json({
-        message: `DOB not found for ${name}`,
-        wishes: [],
-      });
-    }
+    // ===== 🎂 Birthday Handling =====
+    if (user.dob) {
+      const birthDate = dayjs(user.dob, 'DD-MM-YYYY');
 
-    // ✅ Parse DOB using correct format
-    const birthDate = dayjs(user.dob, 'DD-MM-YYYY');
-    if (!birthDate.isValid()) {
-      return res.status(400).json({ message: 'Invalid DOB format' });
-    }
+      if (birthDate.isValid()) {
+        let nextBirthday = birthDate.year(today.year());
 
-    let nextBirthday = birthDate.year(today.year());
+        if (nextBirthday.isBefore(today, 'day')) {
+          nextBirthday = nextBirthday.add(1, 'year');
+        }
 
-    if (nextBirthday.isBefore(today, 'day')) {
-      nextBirthday = nextBirthday.add(1, 'year');
-    }
+        const isBirthdayToday = nextBirthday.format('MM-DD') === today.format('MM-DD');
 
-    const isToday = nextBirthday.format('MM-DD') === today.format('MM-DD');
-
-    if (isToday && today.hour() === 0) {
-      wishes.push(`🎉 It's 12:00 AM — Happy Birthday, ${name}! May your day be filled with happiness.`);
-    } else if (isToday) {
-      wishes.push(`🎉 Happy Birthday, ${name}! Wishing you joy and love.`);
+        if (isBirthdayToday && today.hour() === 0) {
+          wishes.push(`🎉 It's 12:00 AM — Happy Birthday, ${name}! May your day be filled with happiness.`);
+        } else if (isBirthdayToday) {
+          wishes.push(`🎉 Happy Birthday, ${name}! Wishing you joy and love.`);
+        } else {
+          const daysLeft = nextBirthday.diff(today, 'day');
+          wishes.push(`🎂 ${name}, your birthday is in ${daysLeft} day(s) on ${nextBirthday.format('MMMM DD')}.`);
+        }
+      } else {
+        wishes.push(`⚠️ Invalid DOB format for ${name}`);
+      }
     } else {
-      const daysLeft = nextBirthday.diff(today, 'day');
-      wishes.push(`🎂 ${name}, your birthday is in ${daysLeft} day(s) on ${nextBirthday.format('MMMM DD')}.`);
+      wishes.push(`DOB not found for ${name}`);
+    }
+
+    // ===== 💍 Anniversary Handling =====
+    if (user.marriageAnniversaryDate) {
+      const anniversaryDate = dayjs(user.marriageAnniversaryDate, 'DD-MM-YYYY');
+
+      if (anniversaryDate.isValid()) {
+        let nextAnniversary = anniversaryDate.year(today.year());
+
+        if (nextAnniversary.isBefore(today, 'day')) {
+          nextAnniversary = nextAnniversary.add(1, 'year');
+        }
+
+        const isAnniversaryToday = nextAnniversary.format('MM-DD') === today.format('MM-DD');
+
+        if (isAnniversaryToday && today.hour() === 0) {
+          wishes.push(`💖 It's 12:00 AM — Happy Anniversary, ${name}! Wishing you love and happiness.`);
+        } else if (isAnniversaryToday) {
+          wishes.push(`💖 Happy Anniversary, ${name}! Cheers to your beautiful journey together.`);
+        } else {
+          const daysLeft = nextAnniversary.diff(today, 'day');
+          wishes.push(`💍 ${name}, your anniversary is in ${daysLeft} day(s) on ${nextAnniversary.format('MMMM DD')}.`);
+        }
+      } else {
+        wishes.push(`⚠️ Invalid Anniversary date format for ${name}`);
+      }
     }
 
     res.json({
-      message: 'Birthday wish or countdown',
+      message: 'Birthday and/or Anniversary wish or countdown',
       wishes,
     });
 
@@ -1684,6 +1805,33 @@ export const addContactUs = async (req, res) => {
 };
 
 
+
+export const addWebsiteContact = async (req, res) => {
+  try {
+    const { name, email, message, requestPoster } = req.body;
+
+    // Create a new website contact message
+    const newWebsiteContact = new ContactUs({
+      name,
+      email,
+      message,
+      requestPoster, // This should be a boolean (true/false)
+    });
+
+    // Save to DB
+    await newWebsiteContact.save();
+
+    res.status(201).json({
+      message: 'Thank you for contacting us! We’ll get back to you as soon as possible.',
+      contact: newWebsiteContact,
+    });
+  } catch (error) {
+    console.error('Error adding website contact message:', error);
+    res.status(500).json({ message: 'Something went wrong while submitting the form!' });
+  }
+};
+
+
 export const getAllContactUs = async (req, res) => {
   try {
     // Fetch all contact messages from the database
@@ -1696,5 +1844,75 @@ export const getAllContactUs = async (req, res) => {
   } catch (error) {
     console.error('Error fetching Contact Us messages:', error);
     res.status(500).json({ message: 'Something went wrong while fetching messages!' });
+  }
+};
+
+
+export const getHoroscopeBySign = async (req, res) => {
+  const { sign } = req.query;
+
+  if (!sign) {
+    return res.status(400).json({ message: "Zodiac sign is required." });
+  }
+
+  try {
+    const url = `https://www.ganeshaspeaks.com/horoscopes/daily-horoscope/${sign.toLowerCase()}/`;
+    const { data } = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; server-side-scraper)'
+      }
+    });
+
+    const $ = cheerio.load(data);
+
+    // From inspecting the page, the horoscope text is inside <div class="horoscope-content">
+    // or inside <div class="article-body"> etc. Adjust selector accordingly.
+
+    const horoscopeText = $('.horoscope-content p').text().trim();
+
+    if (!horoscopeText) {
+      return res.status(404).json({ message: "Horoscope not found for this sign." });
+    }
+
+    return res.status(200).json({
+      sign: sign.toLowerCase(),
+      date: new Date().toISOString().slice(0, 10),
+      horoscope: horoscopeText
+    });
+
+  } catch (error) {
+    console.error("Error fetching horoscope:", error.message);
+    return res.status(500).json({ message: "Failed to fetch horoscope." });
+  }
+};
+// ✅ User requests wallet redemption using userId from params
+export const requestWalletRedemption = async (req, res) => {
+  try {
+    const { userId } = req.params; // ✅ userId from URL
+    const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (user.wallet <= 0) {
+      return res.status(400).json({ message: "Insufficient wallet balance" });
+    }
+
+    const redemption = new WalletRedemption({
+      user: userId,
+      amount: user.wallet,
+      accountHolderName,
+      accountNumber,
+      ifscCode,
+      bankName,
+      status: 'Pending'
+    });
+
+    await redemption.save();
+
+    return res.status(201).json({ message: "Redemption request submitted", redemption });
+  } catch (err) {
+    console.error("Wallet redemption error:", err);
+    return res.status(500).json({ message: "Server error" });
   }
 };

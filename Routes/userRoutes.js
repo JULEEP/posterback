@@ -33,7 +33,12 @@ import {
      confirmDeleteAccount,
      deleteUser,
      addContactUs,
-     getAllContactUs
+     getAllContactUs,
+     reportUser,
+     resendOTP,
+     getHoroscopeBySign,
+     addWebsiteContact,
+     requestWalletRedemption
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -44,6 +49,7 @@ router.post('/register', registerUser);
 // Login Route
 router.post('/login', loginUser);
 router.post('/verify-otp', verifyOTP);
+router.post('/resend-otp', resendOTP);
 // Get user details (GET)
 router.get('/get-user/:userId', getUser);  // Adding a middleware to verify JWT token
 
@@ -85,6 +91,13 @@ router.get('/confirm-delete-account/:token', confirmDeleteAccount);
 router.delete('/delete-user/:userId', deleteUser);
 router.post('/contact-us/:userId', addContactUs);
 router.get('/getallcontactus', getAllContactUs);
+router.post('/report/:reporterId/:reportedUserId', reportUser);
+// In your routes file
+router.get('/horoscope', getHoroscopeBySign);
+router.post('/contactwithus', addWebsiteContact);
+// In routes file
+router.post('/redeem/:userId', requestWalletRedemption);
+
 
 
 
