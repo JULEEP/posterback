@@ -39,7 +39,7 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://194.164.148.244:3079', 'http://localhost:3002', 'https://ezystudio-zu8y.vercel.app', 'https://editezy.com'],
+  origin: ['http://localhost:3000', 'http://194.164.148.244:3079', 'http://localhost:3002', 'https://ezystudio-zu8y.vercel.app', 'https://editezy.com', 'https://posternova.vercel.app'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
