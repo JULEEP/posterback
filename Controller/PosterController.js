@@ -279,10 +279,10 @@ export const getAllPosters = async (req, res) => {
 
 
 
-// ✅ Get posters by categoryName
+// ✅ Get posters by categoryName using query param
 export const getPostersByCategory = async (req, res) => {
   try {
-    const { categoryName } = req.body;
+    const { categoryName } = req.query; // 🔹 use query instead of body
 
     if (!categoryName) {
       return res.status(400).json({ message: 'categoryName is required' });

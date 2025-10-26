@@ -16,20 +16,34 @@ const razorpay = new Razorpay({
  key_secret: 'pPCBFrLelXZZ1d6lrT41wVkR',
 });
 
+
+
+
+// const razorpay = new Razorpay({
+//  key_id: 'rzp_test_BxtRNvflG06PTV',
+//  key_secret: 'RecEtdcenmR7Lm4AIEwo4KFr',
+// });
+
 export const payWithRazorpay = async (req, res) => {
   try {
     const { userId, planId, transactionId } = req.body;
 
     // Validate user
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
 
     // Validate plan
     const plan = await Plan.findById(planId);
-    if (!plan) return res.status(404).json({ success: false, message: "Plan not found" });
+    if (!plan) {
+      return res.status(404).json({ success: false, message: "Plan not found" });
+    }
 
-    let offerPrice = plan.offerPrice ?? plan.originalPrice ?? 0;
-    if (user.referredBy && offerPrice > 100) offerPrice -= 100;
+    // Determine amount
+    let offerPrice = plan.offerPrice !== undefined && plan.offerPrice !== null
+      ? plan.offerPrice
+      : plan.originalPrice ?? 0;
 
     const amount = Number(offerPrice);
     if (isNaN(amount) || amount < 1) {
@@ -44,25 +58,31 @@ export const payWithRazorpay = async (req, res) => {
     const merchantOrderId = `txn_${uuidv4()}`;
 
     let paymentInfo = await razorpay.payments.fetch(transactionId);
-    if (!paymentInfo) return res.status(404).json({ success: false, message: "Payment not found" });
+    if (!paymentInfo) {
+      return res.status(404).json({ success: false, message: "Payment not found" });
+    }
 
-    // Force capture if not captured and not refunded
-    if (paymentInfo.status === "authorized" || paymentInfo.status === "created" || paymentInfo.status === "failed") {
+    // Capture if not captured
+    if (
+      paymentInfo.status === "authorized" ||
+      paymentInfo.status === "created" ||
+      paymentInfo.status === "failed"
+    ) {
       try {
         await razorpay.payments.capture(transactionId, Math.round(amount * 100), "INR");
-        paymentInfo = await razorpay.payments.fetch(transactionId); // refresh after capture
+        paymentInfo = await razorpay.payments.fetch(transactionId);
       } catch (err) {
         console.error("Payment capture failed:", err);
         return res.status(500).json({ success: false, message: "Payment capture failed" });
       }
     }
 
-    // If payment is refunded, still proceed but warn
+    // Warn if refunded
     if (paymentInfo.status === "refunded") {
       console.warn("Warning: Payment has been refunded but proceeding with plan activation.");
     }
 
-    // If payment still not captured, return error
+    // If not captured
     if (paymentInfo.status !== "captured") {
       return res.status(400).json({
         success: false,
@@ -82,7 +102,7 @@ export const payWithRazorpay = async (req, res) => {
       transactionId,
     });
 
-    // Set subscription dates (1 year)
+    // Set subscription dates
     const startDate = new Date();
     const endDate = new Date();
     endDate.setFullYear(endDate.getFullYear() + 1);
@@ -102,7 +122,7 @@ export const payWithRazorpay = async (req, res) => {
 
     await user.save();
 
-    // Referral wallet credit
+    // ✅ Referral wallet credit
     if (user.referredBy) {
       const referrer = await User.findById(user.referredBy);
       if (referrer) {
@@ -117,7 +137,7 @@ export const payWithRazorpay = async (req, res) => {
       return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
     };
 
-    // Final success response
+    // ✅ Final response
     res.status(200).json({
       success: true,
       message: "Payment successful and plan added to user",
@@ -153,7 +173,6 @@ export const payWithRazorpay = async (req, res) => {
     });
   }
 };
-
 export const getAllPayments = async (req, res) => {
   try {
     const payments = await Payment.find()

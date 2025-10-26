@@ -218,41 +218,31 @@ export const loginUser = async (req, res) => {
       return res.status(403).json({ message: 'You have been blocked by the admin. Please contact support.' });
     }
 
-    let otp;
-    const otpExpiry = new Date(Date.now() + 30 * 1000); // 30 seconds expiry
+    // Use static OTP
+    const otp = '1234'; // ✅ Static OTP
+    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // Optional, for future use
 
-    if (mobile === '1234567890') {
-      otp = '1234'; // Test OTP
-    } else {
-      otp = generateOTP(); // Your custom OTP generation
-    }
-
-    // Save OTP and expiry to DB
+    // Save OTP and expiry
     user.otp = otp;
     user.otpExpiry = otpExpiry;
     await user.save();
 
-    // Send OTP via Twilio or other service
+    // ✅ Skip actual OTP sending for now
+    /*
     if (mobile !== '1234567890') {
       await sendOTP(mobile, otp);
     }
+    */
 
-    // Prepare response
     const userResponse = user.toObject();
     delete userResponse.otp;
     delete userResponse.otpExpiry;
 
-    const responsePayload = {
-      message: 'OTP sent successfully.',
+    res.status(200).json({
+      message: 'OTP (static) set successfully.',
       user: userResponse,
-    };
-
-    // Include OTP in response for test mobile
-    if (mobile === '1234567890') {
-      responsePayload.otp = otp;
-    }
-
-    res.status(200).json(responsePayload);
+      otp: otp // ✅ Include static OTP for testing
+    });
   } catch (error) {
     console.error('Error in loginUser:', error);
     res.status(500).json({ message: 'Something went wrong.' });
@@ -321,15 +311,16 @@ export const verifyOTP = async (req, res) => {
   }
 
   try {
-    const user = await User.findOne({ otp: parseInt(otp) });
+    // Check if OTP is '1234' (static)
+    const user = await User.findOne({ otp: '1234' });
 
     if (!user) {
       return res.status(400).json({ error: 'Invalid OTP' });
     }
 
-    // OTP matched – clear OTP
+    // ✅ OTP matched – clear OTP fields
     user.otp = null;
-    user.otpExpiry = null; // Optional: only if you store expiry
+    user.otpExpiry = null;
     await user.save();
 
     return res.status(200).json({
@@ -1705,7 +1696,7 @@ export const deleteAccount = async (req, res) => {
       from: 'pms226803@gmail.com',
       to: email,
       subject: 'Account Deletion Request Received',
-      text: `Hi ${user.name},\n\nWe have received your account deletion request. To confirm the deletion of your account, please click the link below:\n\n${deleteLink}\n\nReason: ${reason}\n\nIf you have any questions or need further assistance, please feel free to contact us at businessbadavo@gmail.com.\n\nBest regards,\nYour Team`,
+      text: `Hi ${user.name},\n\nWe have received your account deletion request. To confirm the deletion of your account, please click the link below:\n\n${deleteLink}\n\nReason: ${reason}\n\nIf you have any questions or need further assistance, please feel free to contact us at businessbadavo@gmail.com.\n\nBest regards,\nPOSTERNOVA Team`,
     };
 
     await transporter.sendMail(mailOptions);
