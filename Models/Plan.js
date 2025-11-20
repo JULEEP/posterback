@@ -24,6 +24,9 @@ const PlanSchema = new Schema(
     discountPercentage: {
       type: Number,
     },
+       appleProductId: {
+      type: String,
+    },
     features: {
       type: [String],
     },

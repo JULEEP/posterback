@@ -9,13 +9,18 @@ import User from '../Models/User.js';
 import Payment from '../Models/Payment.js';
 import { v4 as uuidv4 } from 'uuid';
 import Razorpay from 'razorpay';
+import iap from "apple-iap";
 
+
+// const razorpay = new Razorpay({
+//  key_id: 'rzp_live_QbfofYHBZgtn7V',
+//  key_secret: 'pPCBFrLelXZZ1d6lrT41wVkR',
+// });
 
 const razorpay = new Razorpay({
- key_id: 'rzp_live_QbfofYHBZgtn7V',
- key_secret: 'pPCBFrLelXZZ1d6lrT41wVkR',
+  key_id:"rzp_live_RTmw5UsY3ffNxq",
+  key_secret:"KCaEBOsYRHE0GyHIS1SN8p5c",
 });
-
 
 
 
@@ -173,6 +178,77 @@ export const payWithRazorpay = async (req, res) => {
     });
   }
 };
+
+
+export const purchasePlanSimple = async (req, res) => {
+  try {
+    const { userId, planId } = req.body;
+
+    // Validate user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Validate plan
+    const plan = await Plan.findById(planId);
+    if (!plan) {
+      return res.status(404).json({ success: false, message: "Plan not found" });
+    }
+
+    // Set subscription dates
+    const startDate = new Date();
+    const endDate = new Date();
+    endDate.setFullYear(endDate.getFullYear() + 1); // 1-year duration (adjust if needed)
+
+    // Add plan to user
+    user.subscribedPlans.push({
+      planId: plan._id,
+      name: plan.name,
+      originalPrice: plan.originalPrice,
+      offerPrice: plan.offerPrice ?? plan.originalPrice,
+      discountPercentage: plan.discountPercentage,
+      duration: plan.duration,
+      startDate,
+      endDate,
+      isPurchasedPlan: true,
+    });
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Plan purchased successfully",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+      },
+      plan: {
+        id: plan._id,
+        name: plan.name,
+        originalPrice: plan.originalPrice,
+        offerPrice: plan.offerPrice ?? plan.originalPrice,
+        discountPercentage: plan.discountPercentage,
+        duration: plan.duration,
+        startDate,
+        endDate,
+        isPurchasedPlan: true,
+      },
+    });
+
+  } catch (error) {
+    console.error("Purchase plan error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to purchase plan",
+      error: error.message,
+    });
+  }
+};
+
+
 export const getAllPayments = async (req, res) => {
   try {
     const payments = await Payment.find()
@@ -296,5 +372,161 @@ export const checkPhonePeStatus = async (req, res) => {
       message: "Error fetching payment details",
       error: error.message,
     });
+  }
+};
+
+
+
+
+export const payWithApple = async (req, res) => {
+  try {
+    const { userId, planId, receiptData, productId } = req.body;
+
+    // Validate fields
+    if (!userId || !planId || !receiptData || !productId) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    // Validate user
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    // Validate plan
+    const plan = await Plan.findById(planId);
+    if (!plan) return res.status(404).json({ success: false, message: "Plan not found" });
+
+    // Store productId in plan if missing
+    if (!plan.appleProductId) {
+      plan.appleProductId = productId;
+      await plan.save();
+    }
+
+    // 1️⃣ Verify receipt with Apple
+    const validationResponse = await iap.validate(iap.APPLE, receiptData);
+    const isValid = iap.isValidated(validationResponse);
+
+    if (!isValid)
+      return res.status(400).json({ success: false, message: "Invalid Apple receipt" });
+
+    // 2️⃣ Extract productId from receipt
+    const purchasedProductId =
+      validationResponse?.receipt?.in_app?.[0]?.product_id;
+
+    if (purchasedProductId !== productId) {
+      return res.status(400).json({
+        success: false,
+        message: "ProductId mismatch"
+      });
+    }
+
+    const transactionId = validationResponse.receipt.in_app[0].transaction_id;
+    const expiresMs = validationResponse.receipt.in_app[0].expires_date_ms;
+
+    // 3️⃣ Save payment
+    await Payment.create({
+      merchantOrderId: "apple_" + uuidv4(),
+      transactionId,
+      userId,
+      plan: planId,
+      amount: plan.offerPrice ?? plan.originalPrice ?? 0,
+      currency: "INR",
+      status: "captured",
+      paymentResponse: validationResponse,
+      paidAt: new Date(),
+    });
+
+    // 4️⃣ Activate subscription
+    const startDate = new Date();
+    const endDate = expiresMs
+      ? new Date(parseInt(expiresMs))
+      : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+
+    user.subscribedPlans.push({
+      planId,
+      name: plan.name,
+      startDate,
+      endDate,
+      isPurchasedPlan: true,
+    });
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Subscription activated",
+      subscription: { planId, name: plan.name, startDate, endDate },
+    });
+
+  } catch (err) {
+    console.error("Apple purchase error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Apple payment failed",
+      error: err.message,
+    });
+  }
+};
+
+
+
+export const handleAppleWebhook = async (req, res) => {
+  try {
+    const notification = req.body;
+
+    console.log("📩 Apple Webhook:", notification.notification_type);
+
+    const latest = notification.unified_receipt?.latest_receipt_info?.[0];
+    if (!latest) return res.status(400).send("Invalid payload");
+
+    const productId = latest.product_id;
+    const userId = latest.app_account_token; // userId from iOS
+    const expiresDate = new Date(parseInt(latest.expires_date_ms));
+
+    if (!userId) return res.status(200).send("No userId in webhook");
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(200).send("User not found");
+
+    // Find plan in DB by productId
+    const plan = await Plan.findOne({ appleProductId: productId });
+    if (!plan) return res.status(200).send("Plan not found");
+
+    // Find subscription in user
+    const index = user.subscribedPlans.findIndex(
+      (p) => p.planId.toString() === plan._id.toString()
+    );
+
+    if (index === -1) return res.status(200).send("Plan not found for user");
+
+    switch (notification.notification_type) {
+      
+      case "DID_RENEW":
+      case "RENEWAL":
+      case "INTERACTIVE_RENEWAL":
+        user.subscribedPlans[index].endDate = expiresDate;
+        user.subscribedPlans[index].isPurchasedPlan = true;
+        break;
+
+      case "DID_FAIL_TO_RENEW":
+      case "BILLING_RETRY":
+        user.subscribedPlans[index].isPurchasedPlan = false;
+        break;
+
+      case "CANCEL":
+      case "REFUND":
+      case "EXPIRED":
+        user.subscribedPlans[index].isPurchasedPlan = false;
+        break;
+
+      default:
+        console.log("Unhandled notification:", notification.notification_type);
+    }
+
+    await user.save();
+    return res.status(200).send("OK");
+
+  } catch (err) {
+    console.error("Webhook error:", err);
+    return res.status(500).send("Error");
   }
 };

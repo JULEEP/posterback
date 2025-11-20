@@ -30,7 +30,8 @@ const walletRedemptionSchema = new mongoose.Schema({
     type: String,
     enum: ['Pending', 'Completed', 'Rejected'],
     default: 'Pending'
-  }
+  },
+  upiId: { type: String },  // Add UPI ID field
 }, {
   timestamps: true
 });

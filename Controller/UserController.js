@@ -24,7 +24,7 @@ import ContactUs from '../Models/ContactUs.js';
 import customParseFormat from 'dayjs/plugin/customParseFormat.js';
 import WalletRedemption from '../Models/WalletRedemption.js';
 dayjs.extend(customParseFormat);
-
+import Razorpay from "razorpay";
 
 import nodemailer from 'nodemailer';
 import axios from 'axios';
@@ -99,22 +99,26 @@ export const registerUser = async (req, res) => {
       name,
       email,
       mobile,
-      dob,
+      dob, // Optional field
       marriageAnniversaryDate,
       referralCode: enteredCode,
     } = req.body;
 
-    if (!name || !mobile || !dob) {
-      return res.status(400).json({ message: 'Name, Mobile, and DOB are required.' });
+    // Validate required fields (name and mobile)
+    if (!name || !mobile) {
+      return res.status(400).json({ message: 'Name and Mobile are required.' });
     }
 
-    // Format dates
-    const formattedDOB = moment(dob, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY');
+    // Format dates (dob and marriageAnniversaryDate) only if present
+    const formattedDOB = dob
+      ? moment(dob, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY')
+      : null;
+
     const formattedAnniversary = marriageAnniversaryDate
       ? moment(marriageAnniversaryDate, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY')
       : null;
 
-    // Check duplicate email or mobile
+    // Check for duplicate email or mobile
     const existingUser = await User.findOne({ $or: [{ email }, { mobile }] });
     if (existingUser) {
       return res.status(400).json({ message: 'User with this email or mobile already exists!' });
@@ -153,6 +157,7 @@ export const registerUser = async (req, res) => {
 
     await newUser.save();
 
+    // Generate JWT token
     const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET_KEY, {
       expiresIn: '1h',
     });
@@ -176,7 +181,6 @@ export const registerUser = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
-
 // Direct Twilio credentials
 const TWILIO_SID = 'ACd37d269a71fda78661c1fd2a54a5b567';
 const TWILIO_AUTH_TOKEN = '06dc6986bc923184ef0cfa8824485bb2';
@@ -922,35 +926,88 @@ export const deleteStory = async (req, res) => {
 };
 
 
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_hNwWuDNHuEICmT',
+  key_secret: process.env.RAZORPAY_KEY_SECRET || 'haiixCtWn3RTXzUWAwZJSQjg'
+});
 
 
 // Controller to handle the plan purchase
+// 🔑 Initialize Razorpay (same structure as createBooking)
+
 export const purchasePlan = async (req, res) => {
   try {
-    const { userId, planId } = req.body;
+    const { userId, planId, transactionId } = req.body;
 
-    // Check if user exists
+    // 1️⃣ Validate user
     const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Check if plan exists
+    // 2️⃣ Validate plan
     const plan = await Plan.findById(planId);
-    if (!plan) {
-      return res.status(404).json({ message: 'Plan not found' });
+    if (!plan) return res.status(404).json({ message: "Plan not found" });
+
+    let paymentStatus = "Pending";
+    let razorpayPaymentId = null;
+    let razorpayOrderId = null;
+
+    // 3️⃣ If transaction already created by frontend
+    if (transactionId) {
+      let paymentInfo;
+      try {
+        paymentInfo = await razorpay.payments.fetch(transactionId);
+      } catch (err) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid Razorpay payment ID",
+          details: err.error || err,
+        });
+      }
+
+      // 4️⃣ Capture payment if authorized
+      if (paymentInfo.status === "authorized") {
+        try {
+          await razorpay.payments.capture(
+            transactionId,
+            Math.round(plan.offerPrice * 100),
+            "INR"
+          );
+          paymentInfo = await razorpay.payments.fetch(transactionId);
+        } catch (err) {
+          return res.status(500).json({ message: "Payment capture failed" });
+        }
+      }
+
+      // 5️⃣ Validate payment status
+      if (paymentInfo.status !== "captured") {
+        return res.status(400).json({
+          success: false,
+          message: `Payment not captured. Status: ${paymentInfo.status}`,
+        });
+      }
+
+      paymentStatus = "Paid";
+      razorpayPaymentId = transactionId;
+      razorpayOrderId = paymentInfo.order_id || null;
+    } else {
+      // 6️⃣ Create Razorpay Order (if payment not initiated yet)
+      const orderOptions = {
+        amount: Math.round(plan.offerPrice * 100), // amount in paise
+        currency: "INR",
+        receipt: `receipt_${Date.now()}`,
+        notes: {
+          userId: userId.toString(),
+          planId: planId.toString(),
+          planName: plan.name,
+        },
+      };
+
+      const order = await razorpay.orders.create(orderOptions);
+      razorpayOrderId = order.id;
+      paymentStatus = "Pending";
     }
 
-    // Static UPI ID for payment (example: "nishasinghvi143@okicici")
-    const upiId = 'nishasinghvi143@okicici';
-
-    // Generate the UPI payment link for QR code generation
-    const upiLink = `upi://pay?pa=${upiId}&pn=YourAppName&mc=123456&tid=1234567890&tr=123456&tn=Subscription+for+${plan.name}&am=${plan.offerPrice}&cu=INR`;
-
-    // Generate QR code
-    const qrCode = await QRCode.toDataURL(upiLink);  // This generates the QR code as a data URL
-
-    // Create the subscription plan object
+    // 7️⃣ Prepare subscribed plan object
     const newSubscribedPlan = {
       planId: plan._id,
       name: plan.name,
@@ -959,29 +1016,34 @@ export const purchasePlan = async (req, res) => {
       discountPercentage: plan.discountPercentage,
       duration: plan.duration,
       startDate: new Date(),
-      endDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)), // Assuming 1-year subscription
+      endDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)), // 1 year validity
+      paymentStatus,
+      razorpayPaymentId: razorpayPaymentId || null,
+      razorpayOrderId: razorpayOrderId || null,
     };
 
-    // Push the new plan to the user's subscribedPlans array
+    // 8️⃣ Save to user
     user.subscribedPlans.push(newSubscribedPlan);
-
     await user.save();
 
-    // Respond with success message and QR code
+    // 9️⃣ Respond with details
     res.status(200).json({
-      message: `Plan purchased successfully! You can complete your payment by: 
-                1. Using UPI ID: ${upiId} 
-                2. Scanning the QR code below to complete the payment.`,
+      success: true,
+      message:
+        paymentStatus === "Paid"
+          ? "✅ Plan purchased successfully!"
+          : "✅ Razorpay order created successfully. Complete payment to activate your plan.",
       plan: newSubscribedPlan,
-      upiId: upiId,  // Return the static UPI ID
-      qrCode: qrCode  // Return the generated QR code as a data URL
+      razorpayKey: process.env.RAZORPAY_KEY_ID || "rzp_live_RTmw5UsY3ffNxq",
+      razorpayOrderId,
+      amount: plan.offerPrice,
+      currency: "INR",
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Error purchasing plan' });
+    console.error("Error in purchasePlan:", error);
+    res.status(500).json({ message: "Error purchasing plan" });
   }
 };
-
 
 
 export const getSubscribedPlan = async (req, res) => {
@@ -1880,15 +1942,18 @@ export const getHoroscopeBySign = async (req, res) => {
 export const requestWalletRedemption = async (req, res) => {
   try {
     const { userId } = req.params; // ✅ userId from URL
-    const { accountHolderName, accountNumber, ifscCode, bankName } = req.body;
+    const { accountHolderName, accountNumber, ifscCode, bankName, upiId } = req.body; // Get upiId from body
 
+    // Check if user exists
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    // Check if user has sufficient wallet balance
     if (user.wallet <= 0) {
       return res.status(400).json({ message: "Insufficient wallet balance" });
     }
 
+    // Create new redemption request
     const redemption = new WalletRedemption({
       user: userId,
       amount: user.wallet,
@@ -1896,11 +1961,18 @@ export const requestWalletRedemption = async (req, res) => {
       accountNumber,
       ifscCode,
       bankName,
-      status: 'Pending'
+      upiId,  // Add upiId here
+      status: 'Pending',  // Default status
     });
 
+    // Save redemption to the database
     await redemption.save();
 
+    // Update user wallet balance after redemption (Optional)
+    user.wallet = 0;  // Assuming you want to deduct the full wallet balance after redemption request
+    await user.save();
+
+    // Send success response with redemption details
     return res.status(201).json({ message: "Redemption request submitted", redemption });
   } catch (err) {
     console.error("Wallet redemption error:", err);
