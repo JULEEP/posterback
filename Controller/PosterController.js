@@ -8,6 +8,16 @@ import os from 'os';
 import PosterCanvas from "../Models/PosterCanvas.js";
 import streamifier  from 'streamifier'
 import Banner from "../Models/Banner.js";
+import moment from "moment";
+import TextRemovedImage from "../Models/TextRemovedImage.js";
+import fetch from "node-fetch";
+import FormData from "form-data";
+import sharp from "sharp";
+
+import dotenv from 'dotenv';
+
+dotenv.config();  // Load environment variables from .env file
+
 
 
 
@@ -637,6 +647,127 @@ const generatePreviewImage = async (bgUrl, overlayUrls = [], overlaySettings = {
   });
 };
 
+// export const canvasCreatePoster = async (req, res) => {
+//   try {
+//     const {
+//       name, 
+//       categoryName, 
+//       festivalDate, 
+//       description, 
+//       tags,
+//       email, 
+//       mobile, 
+//       title,
+//       designData
+//     } = req.body;
+
+//     if (!req.files || !req.files.posterImage) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'Poster image is required' 
+//       });
+//     }
+
+//     // Parse designData if it's a JSON string
+//     const designDataParsed = typeof designData === 'string' ? JSON.parse(designData) : designData;
+
+//     // Upload final poster image
+//     const posterFile = req.files.posterImage;
+//     const posterUpload = await cloudinary.uploader.upload(posterFile.tempFilePath, {
+//       folder: 'posters/final',
+//       quality: 'auto:good',
+//       format: 'jpg'
+//     });
+
+//     // Upload bgImage if provided
+//     let bgImageData = null;
+//     if (req.files.bgImage) {
+//       const bgUpload = await cloudinary.uploader.upload(req.files.bgImage.tempFilePath, {
+//         folder: 'posters/bg'
+//       });
+//       bgImageData = {
+//         url: bgUpload.secure_url,
+//         publicId: bgUpload.public_id
+//       };
+//     }
+
+//     // Upload multiple overlayImages if provided
+//     let overlayImagesData = [];
+//     if (req.files.overlayImages) {
+//       const overlayFiles = Array.isArray(req.files.overlayImages) 
+//         ? req.files.overlayImages 
+//         : [req.files.overlayImages];
+
+//       for (const file of overlayFiles) {
+//         const overlayUpload = await cloudinary.uploader.upload(file.tempFilePath, {
+//           folder: 'posters/overlay'
+//         });
+//         overlayImagesData.push({
+//           url: overlayUpload.secure_url,
+//           publicId: overlayUpload.public_id
+//         });
+//       }
+//     }
+
+//     // Create new Poster document
+//     const newPoster = new Poster({
+//       name,
+//       categoryName,
+//       festivalDate: festivalDate || undefined,
+//       description: description || undefined,
+//       tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
+//       email: email || undefined,
+//       mobile: mobile || undefined,
+//       title: title || undefined,
+//       posterImage: {
+//         url: posterUpload.secure_url,
+//         publicId: posterUpload.public_id
+//       },
+//       designData: {
+//         bgImage: bgImageData,
+//         overlayImages: overlayImagesData,  // note plural here
+//         bgImageSettings: designDataParsed?.bgImageSettings || {},
+//         overlaySettings: designDataParsed?.overlaySettings || { overlays: [] },
+//         textSettings: designDataParsed?.textSettings || {},
+//         textStyles: designDataParsed?.textStyles || {},
+//         textVisibility: designDataParsed?.textVisibility || {},
+//         overlayImageFilters: designDataParsed?.overlayImageFilters || []
+//       },
+//       createdAt: new Date(),
+//       updatedAt: new Date()
+//     });
+
+//     await newPoster.save();
+
+//     return res.status(201).json({
+//       success: true,
+//       message: 'Poster created successfully',
+//       poster: {
+//         _id: newPoster._id,
+//         name: newPoster.name,
+//         categoryName: newPoster.categoryName,
+//         festivalDate: newPoster.festivalDate,
+//         description: newPoster.description,
+//         tags: newPoster.tags,
+//         email: newPoster.email,
+//         mobile: newPoster.mobile,
+//         title: newPoster.title,
+//         posterImage: newPoster.posterImage.url,
+//         createdAt: newPoster.createdAt
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error('Error creating poster:', error);
+//     return res.status(500).json({ 
+//       success: false,
+//       message: 'Error creating poster', 
+//       error: error.message 
+//     });
+//   }
+// };
+
+
 export const canvasCreatePoster = async (req, res) => {
   try {
     const {
@@ -661,12 +792,24 @@ export const canvasCreatePoster = async (req, res) => {
     // Parse designData if it's a JSON string
     const designDataParsed = typeof designData === 'string' ? JSON.parse(designData) : designData;
 
-    // Upload final poster image
+    // Upload final poster image with watermark in the center
     const posterFile = req.files.posterImage;
     const posterUpload = await cloudinary.uploader.upload(posterFile.tempFilePath, {
       folder: 'posters/final',
       quality: 'auto:good',
-      format: 'jpg'
+      format: 'jpg',
+      transformation: [
+        {
+          overlay: {
+            font_family: "Arial",
+            font_size: 30,
+            text: "Your Watermark"
+          },
+          gravity: "center",
+          opacity: 50,
+          color: "#FFFFFF"
+        }
+      ]
     });
 
     // Upload bgImage if provided
@@ -715,7 +858,7 @@ export const canvasCreatePoster = async (req, res) => {
       },
       designData: {
         bgImage: bgImageData,
-        overlayImages: overlayImagesData,  // note plural here
+        overlayImages: overlayImagesData,
         bgImageSettings: designDataParsed?.bgImageSettings || {},
         overlaySettings: designDataParsed?.overlaySettings || { overlays: [] },
         textSettings: designDataParsed?.textSettings || {},
@@ -756,6 +899,7 @@ export const canvasCreatePoster = async (req, res) => {
     });
   }
 };
+
 
 
 
@@ -932,4 +1076,191 @@ export const deleteBanner = async (req, res) => {
 
 
 
+export const getWeeklyPosters = async (req, res) => {
+  try {
+    const posters = await Poster.find().sort({ categoryName: 1 });
 
+    if (!posters.length) return res.status(200).json({});
+
+    const today = moment().startOf("day");
+
+    // Week ke 7 din aaj se start
+    const weekDays = [];
+    const weekPosters = {};
+    for (let i = 0; i < 7; i++) {
+      const day = moment(today).add(i, "days").format("dddd");
+      weekDays.push(day);
+      weekPosters[day] = [];
+    }
+
+    // Posters ko correct day ke array me push karo
+    posters.forEach(poster => {
+      const posterDay = poster.categoryName; // Sunday, Wednesday, etc.
+
+      // Agar posterDay weekDays me hai → wahi day ke array me push
+      if (weekDays.includes(posterDay)) {
+        weekPosters[posterDay].push({
+          ...poster.toObject(),
+          images: poster.posterImage?.url ? [poster.posterImage.url] : []
+        });
+      }
+    });
+
+    res.status(200).json(weekPosters);
+
+  } catch (error) {
+    console.error("Error fetching weekly posters:", error);
+    res.status(500).json({ message: "Error fetching weekly posters", error });
+  }
+};
+
+
+
+
+
+export const removeTextFromImage = async (req, res) => {
+  let tempFilesToDelete = [];
+
+  try {
+    const { userId } = req.params;
+
+    // 1️⃣ Image validation
+    if (!req.files || !req.files.image) {
+      return res.status(400).json({
+        success: false,
+        message: "Image is required",
+      });
+    }
+
+    if (!req.files.mask) {
+      return res.status(400).json({
+        success: false,
+        message: "Mask is required. Please select text area to remove.",
+      });
+    }
+
+    const imageFile = Array.isArray(req.files.image)
+      ? req.files.image[0]
+      : req.files.image;
+
+    const maskFile = Array.isArray(req.files.mask)
+      ? req.files.mask[0]
+      : req.files.mask;
+
+    if (!imageFile.tempFilePath || !maskFile.tempFilePath) {
+      return res.status(400).json({
+        success: false,
+        message: "Please upload local image and mask files",
+      });
+    }
+
+    tempFilesToDelete.push(imageFile.tempFilePath);
+    tempFilesToDelete.push(maskFile.tempFilePath);
+
+    // 2️⃣ Convert image to PNG
+    const cleanImageBuffer = await sharp(imageFile.tempFilePath)
+      .png()
+      .toBuffer();
+
+    const { width, height } = await sharp(imageFile.tempFilePath).metadata();
+
+    // 3️⃣ Process MASK (MOST IMPORTANT PART)
+    // White (user selection) → Transparent (editable)
+    // Black (rest) → Opaque (protected)
+    const cleanMaskBuffer = await sharp(maskFile.tempFilePath)
+      .resize(width, height)
+      .ensureAlpha()
+      .negate({ alpha: false }) // 🔥 invert mask
+      .png()
+      .toBuffer();
+
+    // 4️⃣ Prepare OpenAI request
+    const formData = new FormData();
+    formData.append("model", "gpt-image-1");
+    formData.append(
+      "prompt",
+      "Remove the selected text only and naturally fill it to match the original background. Do not change any other area."
+    );
+
+    formData.append("image", cleanImageBuffer, {
+      filename: "image.png",
+      contentType: "image/png",
+    });
+
+    formData.append("mask", cleanMaskBuffer, {
+      filename: "mask.png",
+      contentType: "image/png",
+    });
+
+    // 5️⃣ Call OpenAI Image Edit API
+    const openaiRes = await fetch("https://api.openai.com/v1/images/edits", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        ...formData.getHeaders(),
+      },
+      body: formData,
+    });
+
+    const result = await openaiRes.json();
+
+    if (!openaiRes.ok || !result?.data?.[0]?.b64_json) {
+      console.error("OpenAI Error:", result);
+      return res.status(500).json({
+        success: false,
+        message: result.error?.message || "OpenAI image edit failed",
+      });
+    }
+
+    // 6️⃣ Upload output to Cloudinary
+    const outputBuffer = Buffer.from(
+      result.data[0].b64_json,
+      "base64"
+    );
+
+    cloudinary.uploader.upload_stream(
+      { folder: "text-removed" },
+      async (error, cloudResult) => {
+
+        // Cleanup temp files
+        tempFilesToDelete.forEach(fp => {
+          fs.unlink(fp, () => {});
+        });
+
+        if (error) {
+          return res.status(500).json({
+            success: false,
+            message: "Cloudinary upload failed",
+            error,
+          });
+        }
+
+        // 7️⃣ Save DB record
+        const saved = await TextRemovedImage.create({
+          userId: userId || null,
+          editedImageUrl: cloudResult.secure_url,
+          cloudinaryPublicId: cloudResult.public_id,
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: "Selected text removed successfully.",
+          imageUrl: cloudResult.secure_url,
+          data: saved,
+        });
+      }
+    ).end(outputBuffer);
+
+  } catch (err) {
+    tempFilesToDelete.forEach(fp => {
+      fs.unlink(fp, () => {});
+    });
+
+    console.error("Image edit error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Processing failed",
+      error: err.message,
+    });
+  }
+};

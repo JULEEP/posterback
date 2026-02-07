@@ -19,6 +19,9 @@ import fileUpload from 'express-fileupload';
 import cron from 'node-cron';
 import { sendBirthdaySMS, sendAnniversarySMS } from './Controller/UserController.js';  // Import functions directly
 import { Blob, File } from 'buffer';
+import { sendPushNotification } from './utils/sendPushNotification.js';
+import { getGreeting } from './utils/greeting.js';
+import User from './Models/User.js';
 
 global.Blob = Blob;
 global.File = File;
@@ -39,7 +42,7 @@ const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://194.164.148.244:3079', 'http://localhost:3002', 'https://ezystudio-zu8y.vercel.app', 'https://editezy.com', 'https://posternova.vercel.app'],
+  origin: ['http://localhost:3000', 'http://194.164.148.244:3079', 'http://localhost:3002', 'https://ezystudio-zu8y.vercel.app', 'https://editezy.com', 'https://posternova.vercel.app', 'http://31.97.206.144:3065'],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
 }));
@@ -96,6 +99,32 @@ cron.schedule('0 0 * * *', async () => {
     console.error('❌ Cron job failed:', err);
   }
 });
+
+
+// ------------------------
+// Cron: Daily Greeting Notifications at 9 AM
+// ------------------------
+cron.schedule('0 9 * * *', async () => {
+  console.log('⏰ Running daily greeting notifications...');
+
+  try {
+    const users = await User.find({ fcmToken: { $ne: null } });
+
+    for (const user of users) {
+      await sendPushNotification({
+        fcmToken: user.fcmToken,
+        title: getGreeting(user.name),
+        body: "🌟 Start your day with something special!",
+        data: { type: "DAILY_GREETING" }
+      });
+    }
+
+    console.log(`✅ Sent daily greetings to ${users.length} users.`);
+  } catch (err) {
+    console.error('❌ Daily greeting cron failed:', err);
+  }
+});
+
 
 
 // Middleware to handle file uploads

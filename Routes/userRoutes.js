@@ -38,7 +38,16 @@ import {
      resendOTP,
      getHoroscopeBySign,
      addWebsiteContact,
-     requestWalletRedemption
+     requestWalletRedemption,
+     getOTP,
+     saveUserHistory,
+     getUserHistory,
+     getAllReels,
+     likeReel,
+     getPanchang,
+     getWalletRedemptionStatus,
+     unlikeReel,
+     sendGreetingNotification
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -49,6 +58,7 @@ router.post('/register', registerUser);
 // Login Route
 router.post('/login', loginUser);
 router.post('/verify-otp', verifyOTP);
+router.get('/getotp', getOTP);
 router.post('/resend-otp', resendOTP);
 // Get user details (GET)
 router.get('/get-user/:userId', getUser);  // Adding a middleware to verify JWT token
@@ -97,6 +107,17 @@ router.get('/horoscope', getHoroscopeBySign);
 router.post('/contactwithus', addWebsiteContact);
 // In routes file
 router.post('/redeem/:userId', requestWalletRedemption);
+
+router.get('/getredemptionstatus/:userId', getWalletRedemptionStatus);
+
+router.post("/user-history", saveUserHistory);
+router.get("/user-history/:userId", getUserHistory);
+
+router.get("/allreels/:userId", getAllReels);
+router.post("/likereel/:reelId/:userId", likeReel);
+router.post("/unlikereel/:reelId/:userId", unlikeReel);
+router.post("/panchang/:userId", getPanchang);
+router.get("/getgreet/:userId", sendGreetingNotification);
 
 
 

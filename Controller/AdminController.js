@@ -13,6 +13,9 @@ import Poster from "../Models/Poster.js";
 import Category from '../Models/Category.js'
 import Banner from '../Models/Banner.js'
 import WalletRedemption from "../Models/WalletRedemption.js";
+import LogoCategory from "../Models/LogoCategory.js";
+import Reel from "../Models/Reel.js";
+import Audio from "../Models/Audio.js";
 
 
 
@@ -445,28 +448,45 @@ export const getDashboardData = async (req, res) => {
 
 export const createLogo = async (req, res) => {
   try {
-    const { name, description, price } = req.body;
+    const { name, description, price, logoCategoryId } = req.body;
+
+    // validations
+    if (!logoCategoryId) {
+      return res
+        .status(400)
+        .json({ message: "Logo category is required." });
+    }
 
     if (!req.files || !req.files.image) {
       return res.status(400).json({ message: "Logo image is required." });
     }
 
-    const file = req.files.image; // Should be a single file
-    
+    const file = req.files.image;
+
     // Upload to Cloudinary
     const result = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: "logo-images"
+      folder: "logo-images",
     });
 
     const image = result.secure_url;
 
-    const newLogo = new Logo({ name, description, price, image });
+    const newLogo = new Logo({
+      name,
+      description,
+      price,
+      image,
+      logoCategoryId,
+    });
+
     const savedLogo = await newLogo.save();
 
     res.status(201).json(savedLogo);
   } catch (error) {
     console.error("Error uploading logo:", error);
-    res.status(500).json({ message: 'Error creating logo', error: error.message });
+    res.status(500).json({
+      message: "Error creating logo",
+      error: error.message,
+    });
   }
 };
 
@@ -475,41 +495,66 @@ export const createLogo = async (req, res) => {
 // ✅ Get all logos
 export const getAllLogos = async (req, res) => {
   try {
-    const logos = await Logo.find().sort({ createdAt: -1 });
+    const { logoCategoryId } = req.query; // optional query
+
+    // Agar logoCategoryId diya ho to filter, warna sab
+    const filter = logoCategoryId ? { logoCategoryId } : {};
+
+    const logos = await Logo.find(filter)
+      .populate("logoCategoryId", "name image") // populate category info
+      .sort({ createdAt: -1 });
+
     res.status(200).json(logos);
   } catch (error) {
-    res.status(500).json({ message: 'Error fetching logos', error });
+    console.error("Error fetching logos:", error);
+    res.status(500).json({
+      message: "Error fetching logos",
+      error: error.message,
+    });
   }
 };
+
 
 // ✅ Update a logo
 export const updateLogo = async (req, res) => {
   try {
     const { logoId } = req.params;
-    const { name, description, price } = req.body;
+    const { name, description, price, logoCategoryId } = req.body;
 
     const logo = await Logo.findById(logoId);
     if (!logo) {
-      return res.status(404).json({ message: 'Logo not found' });
+      return res.status(404).json({ message: "Logo not found" });
     }
 
-    // Update image if new one is uploaded
-    if (req.files && req.files['image']) {
-      const newImage = `uploads/${req.files['image'][0].filename}`;
-      logo.image = newImage;
+    // 🔄 Update image if new image uploaded
+    if (req.files && req.files.image) {
+      const file = req.files.image;
+
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "logo-images",
+      });
+
+      logo.image = result.secure_url;
     }
 
-    // Update other fields
-    logo.name = name || logo.name;
-    logo.description = description || logo.description;
-    logo.price = price || logo.price;
+    // 🔄 Update other fields
+    if (name) logo.name = name;
+    if (description) logo.description = description;
+    if (price) logo.price = price;
+    if (logoCategoryId) logo.logoCategoryId = logoCategoryId;
 
     const updatedLogo = await logo.save();
+
     res.status(200).json(updatedLogo);
   } catch (error) {
-    res.status(500).json({ message: 'Error updating logo', error });
+    console.error("Error updating logo:", error);
+    res.status(500).json({
+      message: "Error updating logo",
+      error: error.message,
+    });
   }
 };
+
 
 // ✅ Delete a logo
 export const deleteLogo = async (req, res) => {
@@ -864,6 +909,413 @@ export const getAllRedemptionRequests = async (req, res) => {
 
 
 
+// ✅ Create Logo Category
+export const createLogoCategory = async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ message: "Category name is required." });
+    }
+
+    if (!req.files || !req.files.image) {
+      return res.status(400).json({ message: "Category image is required." });
+    }
+
+    const file = req.files.image;
+
+    // Upload image to Cloudinary
+    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      folder: "logo-category-images",
+    });
+
+    const image = result.secure_url;
+
+    const newCategory = new LogoCategory({
+      name,
+      image,
+    });
+
+    const savedCategory = await newCategory.save();
+
+    res.status(201).json(savedCategory);
+  } catch (error) {
+    console.error("Error creating logo category:", error);
+
+    // duplicate name error handle
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Category already exists." });
+    }
+
+    res.status(500).json({
+      message: "Error creating logo category",
+      error: error.message,
+    });
+  }
+};
+
+// ✅ Get All Logo Categories
+export const getAllLogoCategories = async (req, res) => {
+  try {
+    const categories = await LogoCategory.find().sort({ createdAt: -1 });
+    res.status(200).json(categories);
+  } catch (error) {
+    console.error("Error fetching logo categories:", error);
+    res.status(500).json({
+      message: "Error fetching logo categories",
+      error: error.message,
+    });
+  }
+};
 
 
-  
+// ✅ Update Logo Category
+export const updateLogoCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    const updateData = { name };
+    
+    // If new image is uploaded
+    if (req.files && req.files.image) {
+      const file = req.files.image;
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "logo-category-images",
+      });
+      updateData.image = result.secure_url;
+    }
+
+    const updatedCategory = await LogoCategory.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true }
+    );
+
+    if (!updatedCategory) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    res.status(200).json(updatedCategory);
+  } catch (error) {
+    console.error("Error updating category:", error);
+    res.status(500).json({
+      message: "Error updating category",
+      error: error.message,
+    });
+  }
+};
+
+// ✅ Delete Logo Category
+export const deleteLogoCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deletedCategory = await LogoCategory.findByIdAndDelete(id);
+
+    if (!deletedCategory) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    // Delete image from Cloudinary if needed
+    // Implement Cloudinary delete if required
+
+    res.status(200).json({ message: "Category deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting category:", error);
+    res.status(500).json({
+      message: "Error deleting category",
+      error: error.message,
+    });
+  }
+};
+
+
+
+export const createReel = async (req, res) => {
+  try {
+    if (!req.files || !req.files.video) {
+      return res.status(400).json({ message: "Reel video is required." });
+    }
+
+    const file = req.files.video;
+
+    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      folder: "reels-videos",
+      resource_type: "video",
+      transformation: [
+        {
+          overlay: {
+            font_family: "Arial",
+            font_size: 28,      // 👈 chhota
+            font_weight: "bold",
+            text: "EDITEZY",
+          },
+          gravity: "south_east",
+          x: 12,
+          y: 12,
+          color: "#ffffff",
+          opacity: 35,        // 👈 soft look
+        },
+      ],
+    });
+
+    const newReel = new Reel({
+      videoUrl: result.secure_url,
+      likeCount: 0,
+      isLiked: false,
+    });
+
+    res.status(201).json(await newReel.save());
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+export const getAllReels = async (req, res) => {
+  try {
+    const reels = await Reel.find().sort({ createdAt: -1 });
+
+    res.status(200).json({
+      message: "Reels fetched successfully",
+      reels,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+export const updateReel = async (req, res) => {
+  try {
+    const { reelId } = req.params;
+
+    const reel = await Reel.findById(reelId);
+    if (!reel) {
+      return res.status(404).json({ message: "Reel not found" });
+    }
+
+    // Agar naya video aaya hai
+    if (req.files && req.files.video) {
+      const file = req.files.video;
+
+      // 🔥 Old video delete from Cloudinary
+      if (reel.videoUrl) {
+        const publicId = reel.videoUrl
+          .split("/")
+          .slice(-1)[0]
+          .split(".")[0];
+
+        await cloudinary.uploader.destroy(
+          `reels-videos/${publicId}`,
+          { resource_type: "video" }
+        );
+      }
+
+      // ⬆️ Upload new video
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "reels-videos",
+        resource_type: "video",
+        transformation: [
+          {
+            overlay: {
+              font_family: "Arial",
+              font_size: 28,
+              font_weight: "bold",
+              text: "EDITEZY",
+            },
+            gravity: "south_east",
+            x: 12,
+            y: 12,
+            color: "#ffffff",
+            opacity: 35,
+          },
+        ],
+      });
+
+      reel.videoUrl = result.secure_url;
+    }
+
+    // Optional fields update
+    if (req.body.likeCount !== undefined) {
+      reel.likeCount = req.body.likeCount;
+    }
+
+    if (req.body.isLiked !== undefined) {
+      reel.isLiked = req.body.isLiked;
+    }
+
+    const updatedReel = await reel.save();
+
+    res.status(200).json({
+      message: "Reel updated successfully",
+      reel: updatedReel,
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+export const deleteReel = async (req, res) => {
+  try {
+    const { reelId } = req.params;
+
+    const reel = await Reel.findById(reelId);
+    if (!reel) {
+      return res.status(404).json({ message: "Reel not found" });
+    }
+
+    await Reel.findByIdAndDelete(reelId);
+
+    res.status(200).json({
+      message: "Reel deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+// 1. Create Audio
+export const createAudio = async (req, res) => {
+  try {
+    if (!req.files || !req.files.audio) {
+      return res.status(400).json({ message: "Audio file is required." });
+    }
+
+    const file = req.files.audio;
+
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      folder: "audios",
+      resource_type: "auto",
+    });
+
+    // Create audio duration (Cloudinary returns duration in seconds)
+    const duration = result.duration || 0;
+
+    const newAudio = new Audio({
+      audioUrl: result.secure_url,
+      title: req.body.title || "",
+      artist: req.body.artist || "",
+      duration: duration,
+      size: result.bytes || 0,
+      format: result.format || ""
+    });
+
+    await newAudio.save();
+
+    res.status(201).json({
+      message: "Audio uploaded successfully",
+      audio: newAudio
+    });
+    
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// 2. Get All Audios
+export const getAllAudios = async (req, res) => {
+  try {
+    const audios = await Audio.find().sort({ createdAt: -1 });
+
+    res.status(200).json({
+      message: "Audios fetched successfully",
+      audios,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// 3. Update Audio
+export const updateAudio = async (req, res) => {
+  try {
+    const { audioId } = req.params;
+
+    const audio = await Audio.findById(audioId);
+    if (!audio) {
+      return res.status(404).json({ message: "Audio not found" });
+    }
+
+    // If new audio file is uploaded
+    if (req.files && req.files.audio) {
+      const file = req.files.audio;
+
+      // Delete old audio from Cloudinary
+      if (audio.audioUrl) {
+        const publicId = audio.audioUrl
+          .split("/")
+          .slice(-1)[0]
+          .split(".")[0];
+
+        await cloudinary.uploader.destroy(
+          `audios/${publicId}`,
+          { resource_type: "auto" }
+        );
+      }
+
+      // Upload new audio
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "audios",
+        resource_type: "auto",
+      });
+
+      audio.audioUrl = result.secure_url;
+      audio.duration = result.duration || 0;
+      audio.size = result.bytes || 0;
+      audio.format = result.format || "";
+    }
+
+    // Update text fields
+    if (req.body.title !== undefined) {
+      audio.title = req.body.title;
+    }
+
+    if (req.body.artist !== undefined) {
+      audio.artist = req.body.artist;
+    }
+
+    const updatedAudio = await audio.save();
+
+    res.status(200).json({
+      message: "Audio updated successfully",
+      audio: updatedAudio,
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// 4. Delete Audio
+export const deleteAudio = async (req, res) => {
+  try {
+    const { audioId } = req.params;
+
+    // 1️⃣ Find audio
+    const audio = await Audio.findById(audioId);
+    if (!audio) {
+      return res.status(404).json({ message: "Audio not found" });
+    }
+
+    // 2️⃣ Delete from database
+    await Audio.findByIdAndDelete(audioId);
+
+    res.status(200).json({
+      message: "Audio deleted successfully from database",
+    });
+
+  } catch (error) {
+    console.error("❌ Delete audio error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};

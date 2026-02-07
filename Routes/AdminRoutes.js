@@ -33,6 +33,18 @@ import {
     blockReportedUser,
     updateRedemptionStatus,
     getAllRedemptionRequests,
+    createLogoCategory,
+    getAllLogoCategories,
+    createReel,
+    getAllReels,
+    updateReel,
+    deleteReel,
+    createAudio,
+    getAllAudios,
+    updateAudio,
+    deleteAudio,
+    updateLogoCategory,
+    deleteLogoCategory,
 } from "../Controller/AdminController.js";
 
 const router = express.Router();
@@ -71,6 +83,23 @@ router.get('/getallreporteduser', getReportedUsers);
 router.put('/block-user/:userId', blockReportedUser);
 router.put("/update-status/:redemptionId", updateRedemptionStatus);
 router.get("/getredemption-requests", getAllRedemptionRequests);
+
+router.post('/createlogocategory', createLogoCategory);
+router.get('/getlogocategories', getAllLogoCategories);
+router.put('/updatelogocategory/:id', updateLogoCategory);
+router.delete('/deletelogocategory/:id', deleteLogoCategory);
+
+router.post('/createreel', createReel);
+router.post('/getallreels', getAllReels);
+router.put("/updatereel/:reelId", updateReel);
+router.delete("/deletereel/:reelId", deleteReel);
+
+
+router.post('/createaudio', createAudio);
+router.get('/getallaudios', getAllAudios);
+router.put('/updateaudio/:audioId', updateAudio);
+router.delete('/deleteaudio/:audioId', deleteAudio);
+
 
 
 

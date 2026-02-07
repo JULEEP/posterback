@@ -36,6 +36,11 @@ const userSchema = new mongoose.Schema({
     type: Schema.Types.ObjectId,
     ref: 'Booking', // Reference to Booking model
   }],
+
+  fcmToken: {
+    type: String,
+    default: null
+  },
   referralCode: {
   type: String,
   unique: true,
@@ -49,17 +54,18 @@ referralPoints: {
 },
 referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   // Customers field with an array of customers inside the same schema
-  customers: [
-    {
-      name: { type: String, required: false },
-      email: { type: String, required: false, unique: true },
-      mobile: { type: String, required: false, unique: true },
-      dob: { type: Date, required: false },
-      address: { type: String, required: false },
-      gender: { type: String, required: false },
-      anniversaryDate: { type: Date, required: false },
-    }
-  ],
+ customers: [
+  {
+    name: { type: String,  },
+    email: { type: String, },
+    mobile: { type: String,},
+    dob: { type: Date, },
+    address: { type: String, },
+    gender: { type: String, },
+    religion: { type: String,}, // ✅ added
+    anniversaryDate: { type: Date,},
+  }
+],
   wallet: { type: Number, default: 0 },
   profileImage: {
     type: String,
@@ -70,6 +76,7 @@ referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }
   type: Boolean,
   default: false,
 },
+
   // other fields
   subscribedPlans: [
     {
@@ -88,6 +95,14 @@ referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }
 
     },
   ],
+  free7DayTrial: {
+  type: Boolean,
+  default: true
+},
+trialExpiryDate: {
+  type: Date
+},
+  isVerified: { type: Boolean, default: false },
     // ✅ Wallet for referral rewards
   wallet: {
     type: Number,

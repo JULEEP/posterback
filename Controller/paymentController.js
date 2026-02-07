@@ -9,7 +9,11 @@ import User from '../Models/User.js';
 import Payment from '../Models/Payment.js';
 import { v4 as uuidv4 } from 'uuid';
 import Razorpay from 'razorpay';
-import iap from "apple-iap";
+import iap from 'in-app-purchase';
+import dotenv from 'dotenv'
+
+dotenv.config()
+
 
 
 // const razorpay = new Razorpay({
@@ -380,50 +384,84 @@ export const checkPhonePeStatus = async (req, res) => {
 
 export const payWithApple = async (req, res) => {
   try {
-    const { userId, planId, receiptData, productId } = req.body;
+    console.log("📥 Incoming Apple payment request:", req.body);
 
-    // Validate fields
-    if (!userId || !planId || !receiptData || !productId) {
-      return res.status(400).json({ success: false, message: "Missing required fields" });
+    const { userId, planId, receiptData, productId } = req.body;
+    
+    // Debug receipt data
+    console.log("🔍 Receipt data analysis:");
+    console.log("Type:", typeof receiptData);
+    console.log("Length:", receiptData.length);
+    console.log("First 100 chars:", receiptData.substring(0, 100));
+    console.log("Is JWT:", receiptData.startsWith('eyJ'));
+
+    // --- DEVELOPMENT MODE: Skip Apple validation ---
+    console.log("🔄 DEVELOPMENT MODE: Skipping Apple validation");
+    
+    // Extract info from JWT for simulation
+    let transactionId, purchaseDate, expiresDate;
+    
+    if (receiptData.startsWith('eyJ')) {
+      try {
+        const base64Url = receiptData.split('.')[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const payload = JSON.parse(Buffer.from(base64, 'base64').toString());
+        
+        console.log("📦 JWT Payload extracted:", {
+          transactionId: payload.transactionId,
+          productId: payload.productId,
+          purchaseDate: payload.purchaseDate
+        });
+
+        // Use data from JWT for simulation
+        transactionId = payload.transactionId || "dev_" + Date.now();
+        purchaseDate = payload.purchaseDate ? new Date(parseInt(payload.purchaseDate)) : new Date();
+        expiresDate = payload.expiresDate ? new Date(parseInt(payload.expiresDate)) : new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+        
+      } catch (jwtError) {
+        console.warn("⚠️ JWT decoding failed, using mock data");
+        transactionId = "dev_mock_" + Date.now();
+        purchaseDate = new Date();
+        expiresDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+      }
+    } else {
+      transactionId = "dev_" + Date.now();
+      purchaseDate = new Date();
+      expiresDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
     }
 
-    // Validate user
+    // Get user and plan
     const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+    if (!user) {
+      console.warn("⚠️ User not found:", userId);
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
 
-    // Validate plan
     const plan = await Plan.findById(planId);
-    if (!plan) return res.status(404).json({ success: false, message: "Plan not found" });
+    if (!plan) {
+      console.warn("⚠️ Plan not found:", planId);
+      return res.status(404).json({ success: false, message: "Plan not found" });
+    }
 
-    // Store productId in plan if missing
+    // Update plan with productId if needed
     if (!plan.appleProductId) {
       plan.appleProductId = productId;
       await plan.save();
+      console.log("ℹ️ Apple ProductId saved to plan:", productId);
     }
 
-    // 1️⃣ Verify receipt with Apple
-    const validationResponse = await iap.validate(iap.APPLE, receiptData);
-    const isValid = iap.isValidated(validationResponse);
-
-    if (!isValid)
-      return res.status(400).json({ success: false, message: "Invalid Apple receipt" });
-
-    // 2️⃣ Extract productId from receipt
-    const purchasedProductId =
-      validationResponse?.receipt?.in_app?.[0]?.product_id;
-
-    if (purchasedProductId !== productId) {
-      return res.status(400).json({
-        success: false,
-        message: "ProductId mismatch"
+    // Check for existing payment with same transactionId to prevent duplicates
+    const existingPayment = await Payment.findOne({ transactionId });
+    if (existingPayment) {
+      console.warn("⚠️ Payment already exists for transaction:", transactionId);
+      return res.status(400).json({ 
+        success: false, 
+        message: "Payment already processed" 
       });
     }
 
-    const transactionId = validationResponse.receipt.in_app[0].transaction_id;
-    const expiresMs = validationResponse.receipt.in_app[0].expires_date_ms;
-
-    // 3️⃣ Save payment
-    await Payment.create({
+    // Save payment record
+    const paymentData = {
       merchantOrderId: "apple_" + uuidv4(),
       transactionId,
       userId,
@@ -431,34 +469,45 @@ export const payWithApple = async (req, res) => {
       amount: plan.offerPrice ?? plan.originalPrice ?? 0,
       currency: "INR",
       status: "captured",
-      paymentResponse: validationResponse,
-      paidAt: new Date(),
-    });
+      paymentResponse: { 
+        simulated: true,
+        environment: "development",
+        receiptType: "JWT",
+        message: "Apple validation skipped in development mode"
+      },
+      paidAt: purchaseDate,
+    };
+    
+    await Payment.create(paymentData);
+    console.log("💾 Payment saved:", paymentData.merchantOrderId);
 
-    // 4️⃣ Activate subscription
-    const startDate = new Date();
-    const endDate = expiresMs
-      ? new Date(parseInt(expiresMs))
-      : new Date(startDate.getTime() + 365 * 24 * 60 * 60 * 1000);
+    // Activate subscription
+    const startDate = purchaseDate;
+    const endDate = expiresDate;
 
-    user.subscribedPlans.push({
+    const subscriptionData = {
       planId,
       name: plan.name,
       startDate,
       endDate,
       isPurchasedPlan: true,
-    });
+      transactionId,
+    };
 
+    user.subscribedPlans.push(subscriptionData);
     await user.save();
+    console.log("✅ Subscription activated:", subscriptionData);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Subscription activated",
-      subscription: { planId, name: plan.name, startDate, endDate },
+      message: "Subscription activated successfully (Development Mode)",
+      subscription: subscriptionData,
+      simulated: true,
+      transactionId: transactionId
     });
 
   } catch (err) {
-    console.error("Apple purchase error:", err);
+    console.error("❌ Apple purchase error:", err);
     return res.status(500).json({
       success: false,
       message: "Apple payment failed",

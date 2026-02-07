@@ -25,10 +25,25 @@ import customParseFormat from 'dayjs/plugin/customParseFormat.js';
 import WalletRedemption from '../Models/WalletRedemption.js';
 dayjs.extend(customParseFormat);
 import Razorpay from "razorpay";
+import {sendPushNotification} from "../utils/sendPushNotification.js"
+import {getGreeting} from "../utils/greeting.js"
 
 import nodemailer from 'nodemailer';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import UserHistory from '../Models/UserHistory.js';
+import Reel from '../Models/Reel.js';
+import fetch from "node-fetch";
+import {
+  Observer,
+  Body,
+  Equator,
+  SearchRiseSet
+} from "astronomy-engine";
+
+
+
+
 
 
 
@@ -99,17 +114,64 @@ export const registerUser = async (req, res) => {
       name,
       email,
       mobile,
-      dob, // Optional field
+      dob, // Optional
       marriageAnniversaryDate,
       referralCode: enteredCode,
+      fcmToken // ✅ ONLY ADDITION
     } = req.body;
 
-    // Validate required fields (name and mobile)
     if (!name || !mobile) {
       return res.status(400).json({ message: 'Name and Mobile are required.' });
     }
 
-    // Format dates (dob and marriageAnniversaryDate) only if present
+    // --- Check if mobile exists ---
+    let user = await User.findOne({ mobile });
+
+    if (user) {
+      if (!user.isVerified) {
+        return res.status(400).json({
+          message: "Your mobile number is not verified. Please verify it first.",
+        });
+      }
+
+      // Update fields if exists
+      if (name) user.name = name;
+      if (email) user.email = email;
+      if (dob) user.dob = dob;
+      if (marriageAnniversaryDate) user.marriageAnniversaryDate = marriageAnniversaryDate;
+
+      // Validate referral code if provided
+      if (enteredCode) {
+        const referrer = await User.findOne({ referralCode: enteredCode.toUpperCase() });
+        if (!referrer) {
+          return res.status(400).json({ message: 'Invalid referral code.' });
+        }
+        user.referredBy = referrer._id;
+      }
+
+      await user.save();
+
+      return res.status(200).json({
+        message: 'User details updated successfully.',
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          mobile: user.mobile,
+          dob: user.dob,
+          marriageAnniversaryDate: user.marriageAnniversaryDate,
+          referralCode: user.referralCode,
+          referredBy: user.referredBy,
+          wallet: user.wallet,
+          free7DayTrial: user.free7DayTrial || false,
+          trialExpiryDate: user.trialExpiryDate || null
+        },
+      });
+    }
+
+    // ---------------------------------------------------
+    // New user creation
+
     const formattedDOB = dob
       ? moment(dob, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY')
       : null;
@@ -117,12 +179,6 @@ export const registerUser = async (req, res) => {
     const formattedAnniversary = marriageAnniversaryDate
       ? moment(marriageAnniversaryDate, ['YYYY-MM-DD', 'DD-MM-YYYY']).format('DD-MM-YYYY')
       : null;
-
-    // Check for duplicate email or mobile
-    const existingUser = await User.findOne({ $or: [{ email }, { mobile }] });
-    if (existingUser) {
-      return res.status(400).json({ message: 'User with this email or mobile already exists!' });
-    }
 
     // Generate unique referral code
     let newReferralCode;
@@ -133,7 +189,6 @@ export const registerUser = async (req, res) => {
       if (!exists) isUnique = true;
     }
 
-    // Validate referral code but do NOT credit wallet here
     let referredBy = null;
     if (enteredCode) {
       const referrer = await User.findOne({ referralCode: enteredCode.toUpperCase() });
@@ -143,7 +198,9 @@ export const registerUser = async (req, res) => {
       referredBy = referrer._id;
     }
 
-    // Create new user without wallet credit
+    // Trial expiry date = 7 days from now
+    const trialExpiryDate = moment().add(7, 'days').toDate();
+
     const newUser = new User({
       name,
       email,
@@ -151,13 +208,15 @@ export const registerUser = async (req, res) => {
       dob: formattedDOB,
       marriageAnniversaryDate: formattedAnniversary,
       referralCode: newReferralCode,
-      referredBy, // store referrer info only
-      wallet: 0, // no coins initially
+      referredBy,
+      wallet: 0,
+      free7DayTrial: true,
+      trialExpiryDate,
+      fcmToken // ✅ ONLY ADDITION
     });
 
     await newUser.save();
 
-    // Generate JWT token
     const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET_KEY, {
       expiresIn: '1h',
     });
@@ -174,6 +233,9 @@ export const registerUser = async (req, res) => {
         referralCode: newUser.referralCode,
         referredBy: newUser.referredBy,
         wallet: newUser.wallet,
+        free7DayTrial: newUser.free7DayTrial,
+        trialExpiryDate: newUser.trialExpiryDate,
+        fcmToken: newUser.fcmToken // ✅ ADDED
       },
     });
   } catch (error) {
@@ -181,6 +243,7 @@ export const registerUser = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
+
 // Direct Twilio credentials
 const TWILIO_SID = 'ACd37d269a71fda78661c1fd2a54a5b567';
 const TWILIO_AUTH_TOKEN = '06dc6986bc923184ef0cfa8824485bb2';
@@ -191,12 +254,13 @@ const TWILIO_PHONE = '+16193309459'; // Your Twilio phone number
 const client = twilio(TWILIO_SID, TWILIO_AUTH_TOKEN);
 
 const generateOTP = () => {
-  return Math.floor(1000 + Math.random() * 9000);
+  return String(Math.floor(1000 + Math.random() * 9000)); // return as string
 };
+
 
 const sendOTP = async (mobile, otp) => {
   const phoneNumber = `+91${mobile}`;
-  const message = `Your one-time password (OTP) is: ${otp}. It is valid for 30 seconds. Do not share it with anyone. – Team POSTER BANAVO`;
+  const message = `Your one-time password (OTP) is: ${otp}. It is valid for 30 seconds. Do not share it with anyone. – Team EDITEZY`;
 
   await client.messages.create({
     body: message,
@@ -207,53 +271,94 @@ const sendOTP = async (mobile, otp) => {
   console.log(`✅ OTP sent to ${phoneNumber}: ${otp}`);
 };
 
-export const loginUser = async (req, res) => {
-  const { mobile } = req.body;
 
-  try {
-    const user = await User.findOne({ mobile });
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found.' });
-    }
-
-    // ✅ Check if user is blocked
-    if (user.isBlocked) {
-      return res.status(403).json({ message: 'You have been blocked by the admin. Please contact support.' });
-    }
-
-    // Use static OTP
-    const otp = '1234'; // ✅ Static OTP
-    const otpExpiry = new Date(Date.now() + 5 * 60 * 1000); // Optional, for future use
-
-    // Save OTP and expiry
-    user.otp = otp;
-    user.otpExpiry = otpExpiry;
+const checkAndExpireTrial = async (user) => {
+  if (
+    user.free7DayTrial === true &&
+    user.trialExpiryDate &&
+    new Date() > user.trialExpiryDate
+  ) {
+    user.free7DayTrial = false;
     await user.save();
-
-    // ✅ Skip actual OTP sending for now
-    /*
-    if (mobile !== '1234567890') {
-      await sendOTP(mobile, otp);
-    }
-    */
-
-    const userResponse = user.toObject();
-    delete userResponse.otp;
-    delete userResponse.otpExpiry;
-
-    res.status(200).json({
-      message: 'OTP (static) set successfully.',
-      user: userResponse,
-      otp: otp // ✅ Include static OTP for testing
-    });
-  } catch (error) {
-    console.error('Error in loginUser:', error);
-    res.status(500).json({ message: 'Something went wrong.' });
   }
 };
 
 
+
+export const loginUser = async (req, res) => {
+  const { mobile } = req.body;
+  if (!mobile) return res.status(400).json({ message: "Mobile is required" });
+
+  try {
+    let user = await User.findOne({ mobile });
+
+    const staticOtpNumbers = ['9744037599', '9849008143'];
+    const otp = staticOtpNumbers.includes(mobile) ? '1234' : generateOTP();
+
+    if (user) {
+
+      // 🔥 AUTO-EXPIRE TRIAL LOGIC
+      if (
+        user.free7DayTrial === true &&
+        user.trialExpiryDate &&
+        new Date() > user.trialExpiryDate
+      ) {
+        user.free7DayTrial = false;
+      }
+
+      user.otp = otp;
+      user.otpExpiry = new Date(Date.now() + 60 * 1000);
+      await user.save();
+
+      return res.status(200).json({
+        message: "OTP generated successfully",
+        otp,
+        user: {
+          _id: user._id,
+          name: user.name || null,
+          email: user.email || null,
+          mobile: user.mobile,
+          wallet: user.wallet || 0,
+          isVerified: user.isVerified || false,
+          isSubscribedPlan: user.isSubscribedPlan || false,
+          free7DayTrial: user.free7DayTrial,
+          trialExpiryDate: user.trialExpiryDate
+        }
+      });
+
+    } else {
+      // New user (temp)
+      const trialExpiryDate = moment().add(7, 'days').toDate();
+
+      user = new User({
+        mobile,
+        otp,
+        otpExpiry: new Date(Date.now() + 60 * 1000),
+        free7DayTrial: true,
+        trialExpiryDate
+      });
+      await user.save();
+
+      return res.status(200).json({
+        message: "OTP generated successfully",
+        otp,
+        user: {
+          _id: user._id,
+          mobile: user.mobile,
+          free7DayTrial: true,
+          trialExpiryDate
+        }
+      });
+    }
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+// Resend OTP function (optional, if user requests to resend OTP)
 export const resendOTP = async (req, res) => {
   const { mobile } = req.body;
 
@@ -261,86 +366,129 @@ export const resendOTP = async (req, res) => {
     const user = await User.findOne({ mobile });
 
     if (!user) {
-      return res.status(404).json({ message: 'User not found.' });
+      return res.status(404).json({ message: "User not found." });
     }
 
+    // Static OTP for specific numbers
+    const staticOtpNumbers = ['9744037599', '9849008143'];
     let otp;
-    const otpExpiry = new Date(Date.now() + 30 * 1000); // 30 seconds expiry
 
-    if (mobile === '1234567890') {
-      otp = '1234'; // Special testing OTP
+    // Check if mobile number is in the static list
+    if (staticOtpNumbers.includes(mobile)) {
+      otp = '1234'; // Static OTP for specified numbers
     } else {
-      otp = generateOTP();
+      otp = generateOTP(); // Random OTP for other numbers
     }
+
+    const otpExpiry = new Date(Date.now() + 30 * 1000); // OTP expiry time (30 seconds)
 
     user.otp = otp;
     user.otpExpiry = otpExpiry;
     await user.save();
 
-    // Twilio se OTP tabhi bhejein jab testing number nahi hai
-    if (mobile !== '1234567890') {
-      await sendOTP(mobile, otp, true);  // true means it's a resend
-    }
-
     const userResponse = user.toObject();
     delete userResponse.otp;
     delete userResponse.otpExpiry;
 
-    const responsePayload = {
-      message: 'OTP resent successfully.',
-      user: userResponse,
-    };
+    res.status(200).json({
+      message: "OTP resent successfully.",
+      otp: otp, // Returning OTP directly (for testing)
+      user: userResponse
+    });
 
-    if (mobile === '1234567890') {
-      responsePayload.otp = otp;
-    }
-
-    res.status(200).json(responsePayload);
   } catch (error) {
-    console.error('Error in resendOTP:', error);
-    res.status(500).json({ message: 'Failed to resend OTP.', error: error.message });
+    console.error("Error in resendOTP:", error);
+    res.status(500).json({ message: "Failed to resend OTP." });
   }
 };
-
 
 
 
 
 
 export const verifyOTP = async (req, res) => {
-  const { otp } = req.body;
+  const { mobile, otp, fcmToken } = req.body; // ✅ fcmToken bhi body se le rahe
 
-  if (!otp) {
-    return res.status(400).json({ error: 'OTP is required' });
+  if (!mobile || !otp) {
+    return res.status(400).json({ error: "Mobile and OTP are required" });
   }
 
   try {
-    // Check if OTP is '1234' (static)
-    const user = await User.findOne({ otp: '1234' });
+    let user = await User.findOne({ mobile });
 
     if (!user) {
-      return res.status(400).json({ error: 'Invalid OTP' });
+      return res.status(404).json({ error: "User not found. Please request OTP first." });
     }
 
-    // ✅ OTP matched – clear OTP fields
+    // Static OTP check for special numbers
+    const staticOtpNumbers = ['9744037599', '9849008143'];
+    if (staticOtpNumbers.includes(mobile) && otp === '1234') {
+      user.isVerified = true;
+      user.otp = null;
+      user.otpExpiry = null;
+      
+      if (fcmToken) user.fcmToken = fcmToken; // ✅ Store fcmToken
+
+      await user.save();
+
+      return res.status(200).json({ 
+        message: "OTP verified successfully", 
+        user 
+      });
+    }
+
+    // Normal OTP validation
+    if (user.otp !== otp) return res.status(400).json({ error: "Invalid OTP" });
+    if (user.otpExpiry < Date.now()) return res.status(400).json({ error: "OTP has expired" });
+
+    // OTP is valid: mark verified
+    user.isVerified = true;
     user.otp = null;
     user.otpExpiry = null;
+    
+    if (fcmToken) user.fcmToken = fcmToken; // ✅ Store fcmToken
+
     await user.save();
 
-    return res.status(200).json({
-      message: 'OTP verified successfully',
-      user: {
-        _id: user._id,
-        mobile: user.mobile,
-        name: user.name || null,
-        dob: user.dob || null,
-      },
+    res.status(200).json({ 
+      message: "OTP verified successfully", 
+      user 
     });
+
   } catch (err) {
-    console.error('OTP Verification Error:', err);
-    return res.status(500).json({ error: 'Server error', details: err.message });
+    console.error("OTP Verification Error:", err);
+    res.status(500).json({ error: "Server error" });
   }
 };
+
+
+export const getOTP = async (req, res) => {
+  const { mobile } = req.body; // ✅ Get mobile from request body
+
+  if (!mobile) {
+    return res.status(400).json({ message: "Mobile number is required." });
+  }
+
+  try {
+    // Find user by mobile
+    const user = await User.findOne({ mobile });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    res.status(200).json({
+      message: "OTP fetched successfully.",
+      otp: user.otp,        // 🔥 returning OTP for testing
+      otpExpiry: user.otpExpiry
+    });
+
+  } catch (error) {
+    console.error("getOTP Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
 
 
 
@@ -431,6 +579,12 @@ export const getUser = async (req, res) => {
       return res.status(404).json({ message: 'User not found!' });
     }
 
+    // ✅ Check if trial has expired
+    let freeTrialActive = user.free7DayTrial;
+    if (user.trialExpiryDate && new Date() > new Date(user.trialExpiryDate)) {
+      freeTrialActive = false;
+    }
+
     return res.status(200).json({
       message: 'User details retrieved successfully!',
       id: user._id,
@@ -438,13 +592,16 @@ export const getUser = async (req, res) => {
       email: user.email,
       mobile: user.mobile,
       profileImage: user.profileImage || 'default-profile-image.jpg',
-      wallet: user.wallet || 0, // ✅ Include wallet amount (defaults to 0 if undefined)
+      wallet: user.wallet || 0, // Include wallet amount
+      free7DayTrial: freeTrialActive, // Show trial status
+      trialExpiryDate: user.trialExpiryDate || null, // Show trial expiry
     });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ message: 'Server error' });
   }
 };
+
 
 
 
@@ -1052,17 +1209,30 @@ export const getSubscribedPlan = async (req, res) => {
 
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
     }
 
+    // ✅ defaults (even if not present in DB)
+    const free7DayTrial = user.free7DayTrial ?? false;
+    const trialExpiryDate = user.trialExpiryDate ?? null;
+
+    // ❌ No subscribed plans
     if (!user.subscribedPlans || user.subscribedPlans.length === 0) {
-      user.isSubscribedPlan = false; // also update in DB
+      user.isSubscribedPlan = false;
       await user.save();
 
       return res.status(200).json({
         success: true,
         message: 'No subscribed plans found',
         isSubscribedPlan: false,
+
+        // ✅ added fields
+        free7DayTrial,
+        trialExpiryDate,
+
         user: {
           id: user._id,
           name: user.name,
@@ -1103,10 +1273,10 @@ export const getSubscribedPlan = async (req, res) => {
       })
     );
 
-    const subscribedPlans = detailedPlans.filter((p) => p !== null);
-    const isSubscribedPlan = subscribedPlans.some((plan) => plan.isActive);
+    const subscribedPlans = detailedPlans.filter(Boolean);
+    const isSubscribedPlan = subscribedPlans.some(plan => plan.isActive);
 
-    // ✅ Save to DB
+    // ✅ Save subscription status
     user.isSubscribedPlan = isSubscribedPlan;
     await user.save();
 
@@ -1114,6 +1284,11 @@ export const getSubscribedPlan = async (req, res) => {
       success: true,
       message: 'Subscribed plans fetched successfully',
       isSubscribedPlan,
+
+      // ✅ added fields (always shown)
+      free7DayTrial,
+      trialExpiryDate,
+
       user: {
         id: user._id,
         name: user.name,
@@ -1147,6 +1322,9 @@ export const addCustomerToUser = async (req, res) => {
     if (!userId || !customer) {
       return res.status(400).json({ message: 'User ID and customer details are required!' });
     }
+
+    // 🔹 ADD THIS LINE ONLY
+    customer.religion = customer.religion || null;
 
     // Find the user by userId
     const user = await User.findById(userId);
@@ -1229,7 +1407,7 @@ export const updateCustomer = async (req, res) => {
       return res.status(404).json({ message: 'Customer not found.' });
     }
 
-    // ✅ Apply updates
+    // ✅ Apply updates (Including the new 'religion' field)
     if (updates.name) customer.name = updates.name;
     if (updates.email) customer.email = updates.email;
     if (updates.mobile) customer.mobile = updates.mobile;
@@ -1237,6 +1415,7 @@ export const updateCustomer = async (req, res) => {
     if (updates.gender) customer.gender = updates.gender;
     if (updates.dob) customer.dob = new Date(updates.dob);
     if (updates.anniversaryDate) customer.anniversaryDate = new Date(updates.anniversaryDate);
+    if (updates.religion) customer.religion = updates.religion; // Add this line for religion
 
     await user.save(); // ✅ Persist changes
 
@@ -1249,6 +1428,7 @@ export const updateCustomer = async (req, res) => {
     return res.status(500).json({ message: 'Internal server error.' });
   }
 };
+
 
 
 
@@ -1976,6 +2156,644 @@ export const requestWalletRedemption = async (req, res) => {
     return res.status(201).json({ message: "Redemption request submitted", redemption });
   } catch (err) {
     console.error("Wallet redemption error:", err);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+// ✅ Save User History
+export const saveUserHistory = async (req, res) => {
+  try {
+    const { userId, logoId } = req.body;
+
+    if (!userId || !logoId) {
+      return res.status(400).json({
+        message: "userId and logoId are required",
+      });
+    }
+
+    if (!req.files || !req.files.editedImage) {
+      return res.status(400).json({
+        message: "Edited logo image is required",
+      });
+    }
+
+    const file = req.files.editedImage;
+
+    // Upload edited image to Cloudinary
+    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      folder: "user-edited-logos",
+    });
+
+    const editedImage = result.secure_url;
+
+    const history = new UserHistory({
+      userId,
+      logoId,
+      editedImage,
+    });
+
+    const savedHistory = await history.save();
+
+    res.status(201).json(savedHistory);
+  } catch (error) {
+    console.error("Error saving user history:", error);
+    res.status(500).json({
+      message: "Error saving user history",
+      error: error.message,
+    });
+  }
+};
+
+
+
+// ✅ Get User History
+export const getUserHistory = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const history = await UserHistory.find({ userId })
+      .populate("logoId", "name image price")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json(history);
+  } catch (error) {
+    console.error("Error fetching user history:", error);
+    res.status(500).json({
+      message: "Error fetching user history",
+      error: error.message,
+    });
+  }
+};
+
+
+
+export const getAllReels = async (req, res) => {
+  try {
+    const { userId } = req.params; // sirf receive kar rahe hain
+
+    // optional: userId ka use future logic ke liye
+    console.log("UserId:", userId);
+
+    // ❌ Reel.find({ userId }) nahi
+    // ✅ sab reels lao
+    const reels = await Reel.find().sort({ createdAt: -1 });
+
+    res.status(200).json({
+      userId,
+      reels,
+    });
+  } catch (error) {
+    console.error("Error fetching reels:", error);
+    res.status(500).json({
+      message: "Error fetching reels",
+      error: error.message,
+    });
+  }
+};
+
+
+
+export const likeReel = async (req, res) => {
+  try {
+    const { reelId, userId } = req.params;
+
+    if (!reelId) {
+      return res.status(400).json({ message: "ReelId is required" });
+    }
+
+    const reel = await Reel.findById(reelId);
+
+    if (!reel) {
+      return res.status(404).json({ message: "Reel not found" });
+    }
+
+    // Agar already liked hai to dobara like na ho
+    if (!reel.isLiked) {
+      reel.likeCount += 1;
+      reel.isLiked = true;
+    }
+
+    await reel.save();
+
+    res.status(200).json({
+      message: "Reel liked successfully",
+      userId,
+      reel,
+    });
+  } catch (error) {
+    console.error("Error liking reel:", error);
+    res.status(500).json({
+      message: "Error liking reel",
+      error: error.message,
+    });
+  }
+};
+
+
+export const unlikeReel = async (req, res) => {
+  try {
+    const { reelId, userId } = req.params;
+
+    if (!reelId) {
+      return res.status(400).json({ message: "ReelId is required" });
+    }
+
+    const reel = await Reel.findById(reelId);
+
+    if (!reel) {
+      return res.status(404).json({ message: "Reel not found" });
+    }
+
+    // Agar currently liked hai tabhi unlike karein
+    if (reel.isLiked) {
+      reel.likeCount = Math.max((reel.likeCount || 1) - 1, 0); // likeCount 0 se neeche na jaaye
+      reel.isLiked = false;
+    }
+
+    await reel.save();
+
+    res.status(200).json({
+      message: "Reel unliked successfully",
+      userId,
+      reel,
+    });
+  } catch (error) {
+    console.error("Error unliking reel:", error);
+    res.status(500).json({
+      message: "Error unliking reel",
+      error: error.message,
+    });
+  }
+};
+
+
+
+// export const getPanchang = async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+//     const { year, month, date, location } = req.body;
+
+//     // 1️⃣ Validate inputs
+//     if (!userId || !year || !month || !date || !location) {
+//       return res.status(400).json({ message: "Missing required fields" });
+//     }
+
+//     // 2️⃣ Fetch user from DB
+//     const user = await User.findById(userId).select("name dob email mobile");
+//     if (!user) return res.status(404).json({ message: "User not found" });
+
+//     // 3️⃣ Geocode location using OpenStreetMap
+//     const geoRes = await fetch(
+//       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(location)}&format=json&limit=1`
+//     );
+//     const geoData = await geoRes.json();
+
+//     if (!geoData || geoData.length === 0) {
+//       return res.status(400).json({ message: "Invalid location or unable to geocode" });
+//     }
+
+//     const latitude = geoData[0].lat;
+//     const longitude = geoData[0].lon;
+
+//     // 4️⃣ Prepare datetime for API (12:00 IST = 6:30 UTC)
+//     const dateObj = new Date(Date.UTC(year, month - 1, date, 6, 30));
+//     const datetime = dateObj.toISOString();
+
+//     // 5️⃣ Generate Prokerala API token
+//     const tokenResponse = await fetch("https://api.prokerala.com/token", {
+//       method: "POST",
+//       headers: { "Content-Type": "application/x-www-form-urlencoded" },
+//       body: new URLSearchParams({
+//         client_id: "d66400ca-5ee0-4ad7-8150-7ebe826f7e71",
+//         client_secret: "cW3hBFmr01ZDfDTUkONeqe6k5vGSXUKfJKuA3bqJ",
+//         grant_type: "client_credentials",
+//       }),
+//     });
+
+//     const tokenData = await tokenResponse.json();
+//     if (!tokenData.access_token) {
+//       return res.status(500).json({ message: "Token generation failed" });
+//     }
+
+//     // 6️⃣ Call Panchang API
+//     const url = `https://api.prokerala.com/v2/astrology/panchang?ayanamsa=1&coordinates=${latitude},${longitude}&datetime=${datetime}&la=en`;
+//     const response = await fetch(url, {
+//       headers: {
+//         Authorization: `Bearer ${tokenData.access_token}`,
+//         "Content-Type": "application/json",
+//       },
+//     });
+
+//     const apiResult = await response.json();
+//     if (!apiResult || !apiResult.data) {
+//       console.log("API Response:", apiResult);
+//       return res.status(500).json({ message: "Panchang data not found from API" });
+//     }
+
+//     const data = apiResult.data;
+
+//     // 7️⃣ Telugu mappings
+//     const maps = {
+//       tithi: {
+//         Pratipada: "ప్రతిపద",
+//         Dvitiiya: "ద్వితీయ",
+//         Tritiiya: "తృతీయ",
+//         Chaturthi: "చతుర్థి",
+//         Panchami: "పంచమి",
+//         Shashthi: "షష్ఠి",
+//         Saptami: "సప్తమి",
+//         Ashtami: "అష్టమి",
+//         Navami: "నవమి",
+//         Dashami: "దశమి",
+//         Ekadashi: "ఏకాదశి",
+//         Dvadashi: " ద్వాదశి",
+//         Trayodashi: "త్రయోదశి",
+//         Chaturdashi: "చతుర్దశి",
+//         Purnima: "పౌర్ణమి",
+//         Amavasya: "అమావాస్య",
+//       },
+//       nakshatra: {
+//         Ashwini: "అశ్విని",
+//         Bharani: "భరణి",
+//         Krittika: "కృత్తిక",
+//         Rohini: "రోహిణి",
+//         Mrigashirsha: "మృగశిర",
+//         Ardra: "ఆర్ద్ర",
+//         Punarvasu: "పునర్వసు",
+//         Pushyami: "పుష్యమి",
+//         Ashlesha: "ఆశ్లేష",
+//         Magha: "మఖ",
+//         PurvaPhalguni: "పూర్వ ఫల్గుణి",
+//         UttaraPhalguni: "ఉత్తర ఫల్గుణి",
+//         Hasta: "హస్త",
+//         Chitta: "చిత్త",
+//         Swati: "స్వాతి",
+//         Vishakha: "విశాఖ",
+//         Anuradha: "అనూరాధ",
+//         Jyeshtha: "జ్యేష్ఠ",
+//         Mula: "మూల",
+//         Purvashadha: "పూర్వాషాఢ",
+//         Uttarashada: "ఉత్తరాషాఢ",
+//         Shravana: "శ్రవణం",
+//         Dhanishta: "ధనిష్ఠ",
+//         Shatabhisha: "శతభిష",
+//         Purvabhadra: "పూర్వాభాద్ర",
+//         Uttarabhadra: "ఉత్తరాభాద్ర",
+//         Revati: "రేవతి",
+//       },
+//       yoga: {
+//         Subha: "శుభ",
+//         Sukla: "శుక్ల",
+//         Shubha: "శుభ",
+//       },
+//       karana: {
+//         Kaulava: "కౌలవ",
+//         Taitila: "తైతిల",
+//         Garija: "గరిజ",
+//       },
+//       vaara: {
+//         Monday: "సోమవారం",
+//         Tuesday: "మంగళవారం",
+//         Wednesday: "బుధవారం",
+//         Thursday: "గురువారం",
+//         Friday: "శుక్రవారం",
+//         Saturday: "శనివారం",
+//         Sunday: "ఆదివారం",
+//       },
+//     };
+
+//     // 8️⃣ Recursive translation to Telugu
+//     const translate = (obj) => {
+//       if (Array.isArray(obj)) return obj.map(translate);
+//       if (obj && typeof obj === "object") {
+//         const out = {};
+//         for (let k in obj) {
+//           if (k === "name") {
+//             out[k] =
+//               maps.tithi[obj[k]] ||
+//               maps.nakshatra[obj[k]] ||
+//               maps.yoga[obj[k]] ||
+//               maps.karana[obj[k]] ||
+//               obj[k];
+//           } else if (k === "vaara") {
+//             out[k] = maps.vaara[obj[k]] || obj[k];
+//           } else {
+//             out[k] = translate(obj[k]);
+//           }
+//         }
+//         return out;
+//       }
+//       return obj;
+//     };
+
+//     // 9️⃣ Send final response
+//     res.status(200).json({
+//       status: "ok",
+//       user: {
+//         name: user.name,
+//         email: user.email,
+//         mobile: user.mobile,
+//         dob: user.dob,
+//       },
+//       location,
+//       data: translate(data),
+//     });
+//   } catch (error) {
+//     console.error("Server Error:", error);
+//     res.status(500).json({ message: "Server error", error: error.message });
+//   }
+// };
+
+
+// teluguConstants.js
+export const TITHI_TELUGU = [
+  "ప్రతిపద","ద్వితీయ","తృతీయ","చతుర్థి","పంచమి",
+  "షష్ఠి","సప్తమి","అష్టమి","నవమి","దశమి",
+  "ఏకాదశి","ద్వాదశి","త్రయోదశి","చతుర్దశి","పౌర్ణమి",
+  "ప్రతిపద","ద్వితీయ","తృతీయ","చతుర్థి","పంచమి",
+  "షష్ఠి","సప్తమి","అష్టమి","నవమి","దశమి",
+  "ఏకాదశి","ద్వాదశి","త్రయోదశి","చతుర్దశి","అమావాస్య"
+];
+
+export const NAKSHATRA_TELUGU = [
+  "అశ్విని","భరణి","కృత్తిక","రోహిణి","మృగశిర",
+  "ఆర్ద్ర","పునర్వసు","పుష్యమి","ఆశ్లేష",
+  "మఖ","పూర్వ ఫల్గుణి","ఉత్తర ఫల్గుణి",
+  "హస్త","చిత్త","స్వాతి","విశాఖ",
+  "అనూరాధ","జ్యేష్ఠ","మూల",
+  "పూర్వాషాఢ","ఉత్తరాషాఢ",
+  "శ్రవణం","ధనిష్ఠ","శతభిష",
+  "పూర్వాభాద్ర","ఉత్తరాభాద్ర","రేవతి"
+];
+
+export const VAARA_TELUGU = [
+  "ఆదివారం","సోమవారం","మంగళవారం",
+  "బుధవారం","గురువారం","శుక్రవారం","శనివారం"
+];
+
+export const KARANA_TELUGU = [
+  "కౌలవ","తైతిల","గరిజ","విష్ట","బవ","బలవ","శకుని","చతుష్పద"
+];
+
+export const YOGA_TELUGU = [
+  "శుభ","అమృత","సౌభాగ్య","శ్రేయ","బల","అముక్త","శుభకార","అనంత","ప్రజాపతి",
+  "ఆనంద","రావి","విధి","పర్ణ","వికార","దుర్ముఖ","శక్తి","శాంత","దివ్య","విద్య","విష్ణు","మంగళ","సుర","చంద్ర"
+];
+
+// Panchang calculation function (simplified JS version)
+export function calculateExactPanchang(year, month, date, lat, lon) {
+  const obs = new Observer(lat, lon, 0); // Observer from astronomy lib
+  const base = new Date(Date.UTC(year, month - 1, date, 0, 0));
+
+  // Sunrise / Sunset / Moonrise / Moonset
+  const sunrise = SearchRiseSet(Body.Sun, obs, +1, base, 1).date;
+  const sunset = SearchRiseSet(Body.Sun, obs, -1, base, 1).date;
+  const moonrise = SearchRiseSet(Body.Moon, obs, +1, base, 1).date;
+  const moonset = SearchRiseSet(Body.Moon, obs, -1, base, 1).date;
+
+  const tithiArr = [];
+  const nakArr = [];
+  const karanaArr = [];
+  const yogaArr = [];
+
+  // Sun-Moon position loop to calculate tithi, nakshatra, karana, yoga
+  const DEG_NAK = 360 / 27;
+  const DEG_YOGA = 360 / 27;
+
+  let prevTithi = null,
+      prevNak = null,
+      prevKarana = null,
+      prevYoga = null;
+
+  let tithiStart = sunrise,
+      nakStart = sunrise,
+      karanaStart = sunrise,
+      yogaStart = sunrise;
+
+  for (let t = new Date(sunrise); t <= sunset; t = new Date(t.getTime() + 60 * 1000)) {
+    const sun = Equator(Body.Sun, t, obs, true, true);
+    const moon = Equator(Body.Moon, t, obs, true, true);
+
+    const sunLon = sun.ra * 15;
+    const moonLon = moon.ra * 15;
+
+    const tithiIndex = Math.floor(((moonLon - sunLon + 360) % 360) / 12);
+    const nakIndex = Math.floor(moonLon / DEG_NAK);
+    const karanaIndex = tithiIndex % 11; // 11 Karana cycle
+    const yogaIndex = Math.floor(((sunLon + moonLon) % 360) / DEG_YOGA);
+
+    // Tithi
+    if (prevTithi === null) prevTithi = tithiIndex;
+    if (tithiIndex !== prevTithi) {
+      tithiArr.push({
+        id: prevTithi + 1,
+        index: 0,
+        name: TITHI_TELUGU[prevTithi],
+        paksha: prevTithi < 15 ? "Shukla Paksha" : "Krishna Paksha",
+        start: tithiStart.toISOString(),
+        end: t.toISOString(),
+      });
+      tithiStart = t;
+      prevTithi = tithiIndex;
+    }
+
+    // Nakshatra
+    if (prevNak === null) prevNak = nakIndex;
+    if (nakIndex !== prevNak) {
+      nakArr.push({
+        id: prevNak + 1,
+        name: NAKSHATRA_TELUGU[prevNak],
+        start: nakStart.toISOString(),
+        end: t.toISOString(),
+      });
+      nakStart = t;
+      prevNak = nakIndex;
+    }
+
+    // Karana
+    if (prevKarana === null) prevKarana = karanaIndex;
+    if (karanaIndex !== prevKarana) {
+      karanaArr.push({
+        id: prevKarana + 1,
+        index: 0,
+        name: KARANA_TELUGU[prevKarana],
+        start: karanaStart.toISOString(),
+        end: t.toISOString(),
+      });
+      karanaStart = t;
+      prevKarana = karanaIndex;
+    }
+
+    // Yoga
+    if (prevYoga === null) prevYoga = yogaIndex;
+    if (yogaIndex !== prevYoga) {
+      yogaArr.push({
+        id: prevYoga + 1,
+        name: YOGA_TELUGU[prevYoga],
+        start: yogaStart.toISOString(),
+        end: t.toISOString(),
+      });
+      yogaStart = t;
+      prevYoga = yogaIndex;
+    }
+  }
+
+  // Push last items
+  tithiArr.push({
+    id: prevTithi + 1,
+    index: 0,
+    name: TITHI_TELUGU[prevTithi],
+    paksha: prevTithi < 15 ? "Shukla Paksha" : "Krishna Paksha",
+    start: tithiStart.toISOString(),
+    end: sunset.toISOString(),
+  });
+  nakArr.push({
+    id: prevNak + 1,
+    name: NAKSHATRA_TELUGU[prevNak],
+    start: nakStart.toISOString(),
+    end: sunset.toISOString(),
+  });
+  karanaArr.push({
+    id: prevKarana + 1,
+    index: 0,
+    name: KARANA_TELUGU[prevKarana],
+    start: karanaStart.toISOString(),
+    end: sunset.toISOString(),
+  });
+  yogaArr.push({
+    id: prevYoga + 1,
+    name: YOGA_TELUGU[prevYoga],
+    start: yogaStart.toISOString(),
+    end: sunset.toISOString(),
+  });
+
+  return {
+    vaara: VAARA_TELUGU[new Date(year, month - 1, date).getDay()],
+    tithi: tithiArr,
+    nakshatra: nakArr,
+    karana: karanaArr,
+    yoga: yogaArr,
+    sunrise: sunrise.toISOString(),
+    sunset: sunset.toISOString(),
+    moonrise: moonrise.toISOString(),
+    moonset: moonset.toISOString(),
+  };
+}
+
+// getPanchangFree endpoint
+export const getPanchang = async (req, res) => {
+  try {
+    const { userId } = req.params; // userId from URL params
+    const { year, month, date, location } = req.body;
+
+    // 1️⃣ Validate inputs
+    if (!userId || !year || !month || !date || !location) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // 2️⃣ Fetch user from DB
+    const user = await User.findById(userId).select("name dob email mobile");
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // 3️⃣ Coordinates (Hyderabad hardcoded, optional geocode)
+    const lat = 17.385;
+    const lon = 78.4867;
+
+    // 4️⃣ Calculate Panchang
+    const data = calculateExactPanchang(year, month, date, lat, lon);
+
+    // 5️⃣ Respond
+    res.status(200).json({
+      status: "ok",
+      user: {
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        dob: user.dob,
+      },
+      location,
+      data,
+    });
+  } catch (err) {
+    console.error("Server Error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+
+// Get Wallet Redemption Status
+export const getWalletRedemptionStatus = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Find latest redemption request of the user
+    const redemption = await WalletRedemption.findOne({ user: userId })
+      .sort({ createdAt: -1 }); // latest first
+
+    if (!redemption) {
+      return res.status(404).json({
+        status: "error",
+        message: "No redemption request found for this account.",
+      });
+    }
+
+    // Determine message based on status
+    let message = "";
+    const status = redemption.status.toLowerCase();
+
+    if (status === "Pending") {
+      message = "Your redemption request is being processed. It will be completed within 24 hours.";
+    } else if (status === "Completed") {
+      message = "Your redemption request has been successfully completed. You can check your account.";
+    } else if (status === "failed" || status === "Rejected") {
+      message = "Your redemption request could not be processed. Please contact support for assistance.";
+    } else {
+      message = `Redemption status: ${redemption.status}`;
+    }
+
+    return res.status(200).json({ status, message });
+
+  } catch (err) {
+    console.error("Get Wallet Redemption Status Error:", err);
+    return res.status(500).json({ status: "error", message: "Server error" });
+  }
+};
+
+
+
+export const sendGreetingNotification = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user || !user.fcmToken) {
+      return res.status(404).json({ message: "User fcmToken not found" });
+    }
+
+    // Prepare the notification content
+    const notificationData = {
+      title: getGreeting(user.name), // e.g., "☀️ Good Afternoon Narasimha varma"
+      body: "✨ We have exciting offers waiting for you!",
+      type: "GREETING"
+    };
+
+    // Normally send the push:
+    // await sendPushNotification({
+    //   fcmToken: user.fcmToken,
+    //   ...notificationData
+    // });
+
+    // Respond with exactly what would go in the push
+    return res.status(200).json({
+      success: true,
+      message: "Notification prepared (not sent)",
+      data: notificationData
+    });
+
+  } catch (err) {
+    console.error("sendGreetingNotification error:", err);
     return res.status(500).json({ message: "Server error" });
   }
 };

@@ -21,7 +21,9 @@ import {
   createBanner,
   getAllBanners,
   updateBanner,
-  deleteBanner
+  deleteBanner,
+  getWeeklyPosters,
+  removeTextFromImage
 } from '../Controller/PosterController.js';
 import fileUpload from "express-fileupload";
 
@@ -49,6 +51,11 @@ router.post("/createbanner", createBanner);
 router.get("/getbanners", getAllBanners);
 router.put("/updatebanner/:id", updateBanner);
 router.delete("/deletebanner/:id", deleteBanner);
+
+router.get('/weeklyposters', getWeeklyPosters); 
+router.post('/removaltext/:userId', removeTextFromImage); 
+
+
 
 
 
