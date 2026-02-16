@@ -47,7 +47,11 @@ import {
      getPanchang,
      getWalletRedemptionStatus,
      unlikeReel,
-     sendGreetingNotification
+     sendGreetingNotification,
+     updateLanguage,
+     verifyOTPs,
+     sendMessageController,
+     getChatMessagesController
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -64,7 +68,7 @@ router.post('/resend-otp', resendOTP);
 router.get('/get-user/:userId', getUser);  // Adding a middleware to verify JWT token
 
 // Update user details (PUT)
-router.put('/update-user/:id', updateUser);  // Adding a middleware to verify JWT token
+router.put('/update-user/:userId', updateUser);  // Adding a middleware to verify JWT token
 // Create a new profile with Form Data (including profile image)
 router.post('/create-profile/:id', createProfile);  // Profile creation with userId in params
 
@@ -118,6 +122,11 @@ router.post("/likereel/:reelId/:userId", likeReel);
 router.post("/unlikereel/:reelId/:userId", unlikeReel);
 router.post("/panchang/:userId", getPanchang);
 router.get("/getgreet/:userId", sendGreetingNotification);
+router.put('/update-lang/:userId', updateLanguage);
+router.post('/verify-firebase-otp', verifyOTPs);
+router.post("/sendchat/:senderId/:receiverId", sendMessageController);
+router.get("/getchat/:senderId/:receiverId", getChatMessagesController);
+
 
 
 

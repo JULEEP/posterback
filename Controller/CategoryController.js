@@ -1,5 +1,8 @@
 import Category from "../Models/Category.js";
 import cloudinary from "../config/cloudinary.js";
+import User from "../Models/User.js";
+
+
 export const createCategory = async (req, res) => {
   try {
     const { categoryName } = req.body;
@@ -35,19 +38,73 @@ export const createCategory = async (req, res) => {
 // 📦 Get all categories
 export const getAllCategories = async (req, res) => {
   try {
+    const { userId } = req.params;
+    
+    let lang = 'en';
+    let user = null;
+    
+    if (userId) {
+      user = await User.findById(userId);
+      if (user) {
+        lang = user.language || 'en';
+      }
+    }
+    
     const categories = await Category.find().sort({ createdAt: -1 });
+
+    // Translate category names if language is Hindi
+    let translatedCategories = categories;
+    
+    if (lang === 'hi' && categories.length > 0) {
+      translatedCategories = await Promise.all(
+        categories.map(async (category) => {
+          const categoryObj = category.toObject ? category.toObject() : { ...category };
+          
+          // Sirf categoryName translate karo
+          if (categoryObj.categoryName) {
+            categoryObj.categoryName = await translateToHindi(categoryObj.categoryName);
+          }
+          
+          return categoryObj;
+        })
+      );
+    }
+
+    const message = lang === 'hi' 
+      ? 'सभी श्रेणियां प्राप्त हुईं'
+      : 'All categories retrieved';
 
     res.status(200).json({
       success: true,
-      message: "All categories retrieved",
-      categories
-
+      message: message,
+      categories: translatedCategories,
+      count: translatedCategories.length
     });
+    
   } catch (error) {
     console.error("Error getting categories:", error);
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error' 
+    });
   }
 };
+
+async function translateToHindi(text) {
+  try {
+    if (/[\u0900-\u097F]/.test(text)) return text;
+    if (!text || text.trim() === '') return text;
+    
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=' + encodeURIComponent(text);
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    return (data && data[0] && data[0][0] && data[0][0][0]) ? data[0][0][0] : text;
+  } catch (error) {
+    return text;
+  }
+}
+
 
 // 🔍 Get single category by ID
 export const getSingleCategory = async (req, res) => {

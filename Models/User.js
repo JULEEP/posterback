@@ -37,6 +37,12 @@ const userSchema = new mongoose.Schema({
     ref: 'Booking', // Reference to Booking model
   }],
 
+  language: {
+  type: String,
+  enum: ['en', 'hi'],
+  default: 'en'
+},
+
   fcmToken: {
     type: String,
     default: null

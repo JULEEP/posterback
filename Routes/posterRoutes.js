@@ -33,7 +33,7 @@ const router = express.Router();
 router.post('/create-poster', createPoster);
 router.post('/create-canvaposter', canvasCreatePoster);
 router.put('/update/:id', updatePoster);
-router.get('/getallposter', getAllPosters); 
+router.get('/getallposter/:userId', getAllPosters); 
 router.put('/editposter/:posterId', editPoster);
 router.delete('/deleteposter/:posterId', deletePoster);
 router.get('/getposterbycategory', getPostersByCategory); 

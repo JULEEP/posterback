@@ -40,6 +40,8 @@ import {
   Equator,
   SearchRiseSet
 } from "astronomy-engine";
+import admin from 'firebase-admin';
+import Chat from '../Models/Chat.js';
 
 
 
@@ -287,7 +289,16 @@ const checkAndExpireTrial = async (user) => {
 
 export const loginUser = async (req, res) => {
   const { mobile } = req.body;
-  if (!mobile) return res.status(400).json({ message: "Mobile is required" });
+  
+  // Language can also be passed in request body for new users
+  const preferredLanguage = req.body.language || 'en';
+  
+  if (!mobile) {
+    const errorMsg = preferredLanguage === 'hi' 
+      ? 'मोबाइल नंबर आवश्यक है' 
+      : 'Mobile is required';
+    return res.status(400).json({ message: errorMsg });
+  }
 
   try {
     let user = await User.findOne({ mobile });
@@ -296,7 +307,6 @@ export const loginUser = async (req, res) => {
     const otp = staticOtpNumbers.includes(mobile) ? '1234' : generateOTP();
 
     if (user) {
-
       // 🔥 AUTO-EXPIRE TRIAL LOGIC
       if (
         user.free7DayTrial === true &&
@@ -310,24 +320,38 @@ export const loginUser = async (req, res) => {
       user.otpExpiry = new Date(Date.now() + 60 * 1000);
       await user.save();
 
+      // Check user's language preference
+      const userLanguage = user.language || 'en';
+      
+      // Translate name if language is Hindi
+      let displayName = user.name || null;
+      if (userLanguage === 'hi' && displayName) {
+        displayName = await translateToHindi(displayName);
+      }
+
+      const message = userLanguage === 'hi'
+        ? 'ओटीपी सफलतापूर्वक जेनरेट हुआ'
+        : 'OTP generated successfully';
+
       return res.status(200).json({
-        message: "OTP generated successfully",
+        message,
         otp,
         user: {
           _id: user._id,
-          name: user.name || null,
+          name: displayName, // Translated name if Hindi user
           email: user.email || null,
           mobile: user.mobile,
           wallet: user.wallet || 0,
           isVerified: user.isVerified || false,
           isSubscribedPlan: user.isSubscribedPlan || false,
           free7DayTrial: user.free7DayTrial,
-          trialExpiryDate: user.trialExpiryDate
+          trialExpiryDate: user.trialExpiryDate,
+          language: user.language || 'en' // Include language preference
         }
       });
 
     } else {
-      // New user (temp)
+      // New user - create with preferred language
       const trialExpiryDate = moment().add(7, 'days').toDate();
 
       user = new User({
@@ -335,28 +359,38 @@ export const loginUser = async (req, res) => {
         otp,
         otpExpiry: new Date(Date.now() + 60 * 1000),
         free7DayTrial: true,
-        trialExpiryDate
+        trialExpiryDate,
+        language: preferredLanguage // Save preferred language for new user
       });
       await user.save();
 
+      const message = preferredLanguage === 'hi'
+        ? 'ओटीपी सफलतापूर्वक जेनरेट हुआ'
+        : 'OTP generated successfully';
+
       return res.status(200).json({
-        message: "OTP generated successfully",
+        message,
         otp,
         user: {
           _id: user._id,
           mobile: user.mobile,
           free7DayTrial: true,
-          trialExpiryDate
+          trialExpiryDate,
+          language: user.language // Include language preference
         }
       });
     }
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    
+    const errorMsg = preferredLanguage === 'hi'
+      ? 'सर्वर त्रुटि'
+      : 'Server error';
+      
+    res.status(500).json({ message: errorMsg });
   }
 };
-
 
 // Resend OTP function (optional, if user requests to resend OTP)
 export const resendOTP = async (req, res) => {
@@ -410,14 +444,29 @@ export const verifyOTP = async (req, res) => {
   const { mobile, otp, fcmToken } = req.body; // ✅ fcmToken bhi body se le rahe
 
   if (!mobile || !otp) {
-    return res.status(400).json({ error: "Mobile and OTP are required" });
+    const errorMsg = req.body?.language === 'hi' 
+      ? 'मोबाइल और ओटीपी आवश्यक है'
+      : 'Mobile and OTP are required';
+    return res.status(400).json({ error: errorMsg });
   }
 
   try {
     let user = await User.findOne({ mobile });
 
     if (!user) {
-      return res.status(404).json({ error: "User not found. Please request OTP first." });
+      const errorMsg = req.body?.language === 'hi'
+        ? 'उपयोगकर्ता नहीं मिला। कृपया पहले ओटीपी अनुरोध करें।'
+        : 'User not found. Please request OTP first.';
+      return res.status(404).json({ error: errorMsg });
+    }
+
+    // Check user's language preference
+    const userLanguage = user.language || 'en';
+
+    // Translate user name if language is Hindi
+    let displayUser = user.toObject ? user.toObject() : { ...user };
+    if (userLanguage === 'hi' && displayUser.name) {
+      displayUser.name = await translateToHindi(displayUser.name);
     }
 
     // Static OTP check for special numbers
@@ -431,15 +480,30 @@ export const verifyOTP = async (req, res) => {
 
       await user.save();
 
+      const successMsg = userLanguage === 'hi'
+        ? 'ओटीपी सफलतापूर्वक सत्यापित हुआ'
+        : 'OTP verified successfully';
+
       return res.status(200).json({ 
-        message: "OTP verified successfully", 
-        user 
+        message: successMsg, 
+        user: displayUser // User with translated name if Hindi
       });
     }
 
     // Normal OTP validation
-    if (user.otp !== otp) return res.status(400).json({ error: "Invalid OTP" });
-    if (user.otpExpiry < Date.now()) return res.status(400).json({ error: "OTP has expired" });
+    if (user.otp !== otp) {
+      const errorMsg = userLanguage === 'hi'
+        ? 'गलत ओटीपी'
+        : 'Invalid OTP';
+      return res.status(400).json({ error: errorMsg });
+    }
+    
+    if (user.otpExpiry < Date.now()) {
+      const errorMsg = userLanguage === 'hi'
+        ? 'ओटीपी की अवधि समाप्त हो गई है'
+        : 'OTP has expired';
+      return res.status(400).json({ error: errorMsg });
+    }
 
     // OTP is valid: mark verified
     user.isVerified = true;
@@ -450,14 +514,29 @@ export const verifyOTP = async (req, res) => {
 
     await user.save();
 
+    // Update displayUser with latest data
+    displayUser = user.toObject ? user.toObject() : { ...user };
+    if (userLanguage === 'hi' && displayUser.name) {
+      displayUser.name = await translateToHindi(displayUser.name);
+    }
+
+    const successMsg = userLanguage === 'hi'
+      ? 'ओटीपी सफलतापूर्वक सत्यापित हुआ'
+      : 'OTP verified successfully';
+
     res.status(200).json({ 
-      message: "OTP verified successfully", 
-      user 
+      message: successMsg, 
+      user: displayUser // User with translated name if Hindi
     });
 
   } catch (err) {
     console.error("OTP Verification Error:", err);
-    res.status(500).json({ error: "Server error" });
+    
+    const errorMsg = req.body?.language === 'hi'
+      ? 'सर्वर त्रुटि'
+      : 'Server error';
+      
+    res.status(500).json({ error: errorMsg });
   }
 };
 
@@ -570,98 +649,160 @@ console.log('Cron job scheduled for birthdays and anniversaries at midnight.');
 // User Controller (GET User)
 export const getUser = async (req, res) => {
   try {
-    const userId = req.params.userId; // Get the user ID from request params
+    const userId = req.params.userId;
 
-    // Find user by ID
     const user = await User.findById(userId);
 
     if (!user) {
-      return res.status(404).json({ message: 'User not found!' });
+      // Error messages
+      const errorMessages = {
+        en: { message: 'User not found!' },
+        hi: { message: 'उपयोगकर्ता नहीं मिला!' }
+      };
+      
+      const userLanguage = user?.language || 'en';
+      return res.status(404).json(errorMessages[userLanguage] || errorMessages.en);
     }
 
-    // ✅ Check if trial has expired
+    // Check if trial has expired
     let freeTrialActive = user.free7DayTrial;
     if (user.trialExpiryDate && new Date() > new Date(user.trialExpiryDate)) {
       freeTrialActive = false;
     }
 
+    // User ki language check
+    const lang = user.language || 'en';
+
+    // Agar language Hindi hai to sirf name Hindi mein bhejo
+    if (lang === 'hi') {
+      // Sirf name ko Hindi mein convert karo
+      const hindiName = await translateToHindi(user.name);
+      
+      return res.status(200).json({
+        message: 'User details retrieved successfully!', // Message English mein
+        userId: user._id.toString(),
+        name: hindiName, // Sirf name Hindi mein
+        email: user.email, // Email English mein
+        mobile: user.mobile, // Mobile English mein
+        profileImage: user.profileImage || 'default-profile-image.jpg', // English mein
+        wallet: user.wallet || 0, // Number hi rahega
+        freeTrial: freeTrialActive, // Boolean hi rahega
+        trialExpiry: user.trialExpiryDate || null, // Date/null hi rahega
+        language: 'hindi'
+      });
+    }
+
+    // Default English response
     return res.status(200).json({
       message: 'User details retrieved successfully!',
-      id: user._id,
+      userId: user._id,
       name: user.name,
       email: user.email,
       mobile: user.mobile,
       profileImage: user.profileImage || 'default-profile-image.jpg',
-      wallet: user.wallet || 0, // Include wallet amount
-      free7DayTrial: freeTrialActive, // Show trial status
-      trialExpiryDate: user.trialExpiryDate || null, // Show trial expiry
+      wallet: user.wallet || 0,
+      freeTrial: freeTrialActive,
+      trialExpiry: user.trialExpiryDate || null,
+      language: 'english'
     });
+
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ message: 'Server error' });
+    
+    const errorMessages = {
+      en: { message: 'Server error' },
+      hi: { message: 'सर्वर त्रुटि' }
+    };
+
+    const userLanguage = req.user?.language || 'en';
+    return res.status(500).json(errorMessages[userLanguage] || errorMessages.en);
   }
 };
 
-
+// Translation function using Google Translate API
+async function translateToHindi(text) {
+  try {
+    // Agar text already Hindi mein hai to waise hi return karo
+    if (/[\u0900-\u097F]/.test(text)) {
+      return text;
+    }
+    
+    // Google Translate API endpoint
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=' + encodeURIComponent(text);
+    
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    // Extract translated text from response
+    if (data && data[0] && data[0][0] && data[0][0][0]) {
+      return data[0][0][0]; // Translated text in Hindi
+    }
+    
+    return text; // Fallback to original text if translation fails
+  } catch (error) {
+    console.error('Translation error:', error);
+    return text; // Fallback to original text
+  }
+}
 
 
 
 // User Controller (UPDATE User)
-export const updateUser = [
-  upload.single('profileImage'),  // 'profileImage' is the field name in the Form Data
-  async (req, res) => {
-    try {
-      const userId = req.params.id;  // Get the user ID from request params
-      const { name, email, mobile } = req.body;
+export const updateUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { name, email, mobile, dob, marriageAnniversaryDate } = req.body;
 
-      // Find the user by ID
-      const user = await User.findById(userId);
-
-      if (!user) {
-        return res.status(404).json({ message: 'User not found!' });
-      }
-
-      // Check if the email or mobile is already taken by another user
-      const userExist = await User.findOne({
-        $or: [{ email }, { mobile }],
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
       });
-
-      if (userExist && userExist._id.toString() !== userId) {
-        return res.status(400).json({
-          message: 'Email or mobile is already associated with another user.',
-        });
-      }
-
-      // Update user details
-      user.name = name || user.name;
-      user.email = email || user.email;
-      user.mobile = mobile || user.mobile;
-
-      // Check if a new profile image is uploaded
-      if (req.file) {
-        // Update the profile image
-        user.profileImage = `/uploads/profiles/${req.file.filename}`;
-      }
-
-      // Save the updated user to the database
-      await user.save();
-
-      return res.status(200).json({
-        message: 'User updated successfully',
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          mobile: user.mobile,
-          profileImage: user.profileImage,  // Return the updated profile image
-        },
-      });
-    } catch (error) {
-      console.error(error);
-      return res.status(500).json({ message: 'Server error' });
     }
-  },
-];
+
+    // Check if email or mobile already exists for another user
+    const userExist = await User.findOne({
+      $or: [{ email }, { mobile }],
+    });
+
+    // if (userExist && userExist._id.toString() !== userId) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "Email or mobile already associated with another user",
+    //   });
+    // }
+
+    // Update fields
+    user.name = name || user.name;
+    user.email = email || user.email;
+    user.mobile = mobile || user.mobile;
+    user.dob = dob || user.dob;
+    user.marriageAnniversaryDate =
+      marriageAnniversaryDate || user.marriageAnniversaryDate;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "User updated successfully",
+      data: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile,
+        dob: user.dob,
+        marriageAnniversaryDate: user.marriageAnniversaryDate,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: error.message,
+    });
+  }
+};
 
 
 
@@ -758,24 +899,48 @@ export const getProfile = async (req, res) => {
     const user = await User.findById(userId).populate('subscribedPlans.planId');  // Assuming `subscribedPlans` references `Plan` model
 
     if (!user) {
-      return res.status(404).json({ message: 'User not found!' });
+      // Error message in multiple languages
+      const errorMessages = {
+        en: { message: 'User not found!' },
+        hi: { message: 'उपयोगकर्ता नहीं मिला!' }
+      };
+      
+      const userLanguage = req.query?.lang || 'en';
+      return res.status(404).json(errorMessages[userLanguage] || errorMessages.en);
     }
 
-    // Respond with user details along with subscribed plans and include dob and marriageAnniversaryDate
+    // Check user's language preference
+    const lang = user.language || 'en';
+
+    // Translate name to Hindi if language is Hindi
+    let displayName = user.name;
+    if (lang === 'hi') {
+      displayName = await translateToHindi(user.name);
+    }
+
+    // Respond with user details along with subscribed plans
     return res.status(200).json({
       id: user._id,
-      name: user.name,
+      name: displayName, // Sirf name translate hoga
       email: user.email,
       mobile: user.mobile,
       profileImage: user.profileImage,
-      dob: user.dob || null,  // Return dob or null if not present
-      marriageAnniversaryDate: user.marriageAnniversaryDate || null,  // Return marriageAnniversaryDate or null if not present
-      subscribedPlans: user.subscribedPlans,  // Include subscribedPlans in the response
-      wallet: user.wallet || 0, // ✅ Include wallet balance (default to 0)
+      dob: user.dob || null,
+      marriageAnniversaryDate: user.marriageAnniversaryDate || null,
+      subscribedPlans: user.subscribedPlans,
+      wallet: user.wallet || 0,
     });
+    
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ message: 'Server error' });
+    
+    const errorMessages = {
+      en: { message: 'Server error' },
+      hi: { message: 'सर्वर त्रुटि' }
+    };
+
+    const userLanguage = req.user?.language || 'en';
+    return res.status(500).json(errorMessages[userLanguage] || errorMessages.en);
   }
 };
 
@@ -940,28 +1105,34 @@ export const getAllStories = async (req, res) => {
     // Fetch all stories, sorted by expiration time (ascending)
     const stories = await Story.find()
       .populate({
-        path: 'user',   // This refers to the 'user' field in the Story schema
-        select: 'name profileImage',   // Select both the 'name' and 'profileImage' fields from the User model
+        path: 'user',
+        select: 'name profileImage language',  // language bhi le lo
       })
-      .sort({ expired_at: 1 });  // Sorting by expiration time (ascending)
+      .sort({ expired_at: 1 });
 
     // Filter out stories where images and videos are empty but caption exists
     const filteredStories = stories.filter(story => {
-      // Keep stories where caption exists, but either images or videos should not be empty
       return (
         (story.caption && story.caption.trim() !== '') &&
         ((story.images && story.images.length > 0) || (story.videos && story.videos.length > 0))
       );
     });
 
-    // Log filtered stories for debugging
-    console.log("Filtered Stories: ", filteredStories);
+    // Sirf user ka name translate karo according to their language
+    for (let story of filteredStories) {
+      if (story.user && story.user.language === 'hi') {
+        // Agar user ki language Hindi hai to name translate karo
+        story.user.name = await translateToHindi(story.user.name);
+      }
+      // Agar English hai to kuch mat karo
+    }
 
-    // Return the filtered stories in the response
+    // Return exactly same structure as before
     res.status(200).json({
       message: "Stories fetched successfully!",
       stories: filteredStories
     });
+    
   } catch (error) {
     console.error('Error fetching stories:', error);
     res.status(500).json({ message: "Something went wrong!" });
@@ -1249,6 +1420,7 @@ export const getSubscribedPlan = async (req, res) => {
     };
 
     const now = new Date();
+    const userLanguage = user.language || 'en'; // Get user's language preference
 
     const detailedPlans = await Promise.all(
       user.subscribedPlans.map(async (planEntry) => {
@@ -1258,9 +1430,15 @@ export const getSubscribedPlan = async (req, res) => {
         const startDate = new Date(planEntry.startDate);
         const endDate = new Date(planEntry.endDate);
 
+        // Translate plan name to Hindi if user's language is Hindi
+        let planName = plan.name;
+        if (userLanguage === 'hi') {
+          planName = await translateToHindi(plan.name);
+        }
+
         return {
           id: plan._id,
-          name: plan.name,
+          name: planName, // Translated name if Hindi user, else original
           originalPrice: plan.originalPrice,
           offerPrice: plan.offerPrice,
           discountPercentage: plan.discountPercentage,
@@ -1282,7 +1460,9 @@ export const getSubscribedPlan = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Subscribed plans fetched successfully',
+      message: userLanguage === 'hi' 
+        ? 'सब्सक्राइब्ड प्लान सफलतापूर्वक प्राप्त हुए' 
+        : 'Subscribed plans fetched successfully',
       isSubscribedPlan,
 
       // ✅ added fields (always shown)
@@ -1300,14 +1480,17 @@ export const getSubscribedPlan = async (req, res) => {
 
   } catch (error) {
     console.error('Error fetching subscribed plans:', error);
+    
+    const userLanguage = req.user?.language || 'en';
     res.status(500).json({
       success: false,
-      message: 'Error fetching subscribed plans',
+      message: userLanguage === 'hi' 
+        ? 'सब्सक्राइब्ड प्लान प्राप्त करने में त्रुटि' 
+        : 'Error fetching subscribed plans',
       error: error.message,
     });
   }
 };
-
 
 
 
@@ -1367,26 +1550,63 @@ export const getAllCustomersForUser = async (req, res) => {
 
     // Validate if userId is provided
     if (!userId) {
-      return res.status(400).json({ message: 'User ID is required!' });
+      const errorMsg = req.query?.lang === 'hi' 
+        ? 'उपयोगकर्ता आईडी आवश्यक है!'
+        : 'User ID is required!';
+      return res.status(400).json({ message: errorMsg });
     }
 
     // Find the user by userId
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: 'User not found!' });
+      const errorMsg = req.query?.lang === 'hi'
+        ? 'उपयोगकर्ता नहीं मिला!'
+        : 'User not found!';
+      return res.status(404).json({ message: errorMsg });
     }
+
+    // Check user's language preference
+    const userLanguage = user.language || 'en';
+
+    // Translate customer names if language is Hindi
+    let translatedCustomers = user.customers || [];
+    
+    if (userLanguage === 'hi' && translatedCustomers.length > 0) {
+      // Translate each customer's name to Hindi
+      translatedCustomers = await Promise.all(
+        translatedCustomers.map(async (customer) => {
+          const customerObj = customer.toObject ? customer.toObject() : { ...customer };
+          
+          if (customerObj.name) {
+            customerObj.name = await translateToHindi(customerObj.name);
+          }
+          
+          return customerObj;
+        })
+      );
+    }
+
+    const successMsg = userLanguage === 'hi'
+      ? 'ग्राहक सफलतापूर्वक प्राप्त हुए!'
+      : 'Customers fetched successfully!';
 
     // Return the customers array from the user document
     return res.status(200).json({
-      message: 'Customers fetched successfully!',
-      customers: user.customers,  // Return the customers array
+      message: successMsg,
+      customers: translatedCustomers,  // Return translated customers array
+      count: translatedCustomers.length
     });
+    
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ message: 'Server error' });
+    
+    const errorMsg = req.query?.lang === 'hi'
+      ? 'सर्वर त्रुटि'
+      : 'Server error';
+      
+    return res.status(500).json({ message: errorMsg });
   }
 };
-
 
 export const updateCustomer = async (req, res) => {
   try {
@@ -1771,11 +1991,21 @@ export const showBirthdayWishOrCountdown = async (req, res) => {
     const user = await User.findById(userId);
 
     if (!user) {
-      return res.status(404).json({ message: 'User not found' });
+      const errorMsg = user?.language === 'hi' 
+        ? 'उपयोगकर्ता नहीं मिला' 
+        : 'User not found';
+      return res.status(404).json({ message: errorMsg });
     }
 
     const today = dayjs();
-    const name = user.name || 'User';
+    const userLanguage = user.language || 'en';
+    
+    // Translate name to Hindi if user language is Hindi
+    let displayName = user.name || 'User';
+    if (userLanguage === 'hi') {
+      displayName = await translateToHindi(displayName);
+    }
+    
     const wishes = [];
 
     // ===== 🎂 Birthday Handling =====
@@ -1792,18 +2022,28 @@ export const showBirthdayWishOrCountdown = async (req, res) => {
         const isBirthdayToday = nextBirthday.format('MM-DD') === today.format('MM-DD');
 
         if (isBirthdayToday && today.hour() === 0) {
-          wishes.push(`🎉 It's 12:00 AM — Happy Birthday, ${name}! May your day be filled with happiness.`);
+          wishes.push(userLanguage === 'hi' 
+            ? `🎉 रात 12 बज गए — जन्मदिन मुबारक हो, ${displayName}! आपका दिन खुशियों से भरा हो।`
+            : `🎉 It's 12:00 AM — Happy Birthday, ${displayName}! May your day be filled with happiness.`);
         } else if (isBirthdayToday) {
-          wishes.push(`🎉 Happy Birthday, ${name}! Wishing you joy and love.`);
+          wishes.push(userLanguage === 'hi'
+            ? `🎉 जन्मदिन मुबारक हो, ${displayName}! आपको खुशी और प्यार मिले।`
+            : `🎉 Happy Birthday, ${displayName}! Wishing you joy and love.`);
         } else {
           const daysLeft = nextBirthday.diff(today, 'day');
-          wishes.push(`🎂 ${name}, your birthday is in ${daysLeft} day(s) on ${nextBirthday.format('MMMM DD')}.`);
+          wishes.push(userLanguage === 'hi'
+            ? `🎂 ${displayName}, आपका जन्मदिन ${daysLeft} दिन में है ${nextBirthday.format('MMMM DD')} को।`
+            : `🎂 ${displayName}, your birthday is in ${daysLeft} day(s) on ${nextBirthday.format('MMMM DD')}.`);
         }
       } else {
-        wishes.push(`⚠️ Invalid DOB format for ${name}`);
+        wishes.push(userLanguage === 'hi'
+          ? `⚠️ ${displayName} के लिए DOB फॉर्मेट गलत है`
+          : `⚠️ Invalid DOB format for ${displayName}`);
       }
     } else {
-      wishes.push(`DOB not found for ${name}`);
+      wishes.push(userLanguage === 'hi'
+        ? `${displayName} के लिए DOB नहीं मिला`
+        : `DOB not found for ${displayName}`);
     }
 
     // ===== 💍 Anniversary Handling =====
@@ -1820,29 +2060,46 @@ export const showBirthdayWishOrCountdown = async (req, res) => {
         const isAnniversaryToday = nextAnniversary.format('MM-DD') === today.format('MM-DD');
 
         if (isAnniversaryToday && today.hour() === 0) {
-          wishes.push(`💖 It's 12:00 AM — Happy Anniversary, ${name}! Wishing you love and happiness.`);
+          wishes.push(userLanguage === 'hi'
+            ? `💖 रात 12 बज गए — सालगिरह मुबारक हो, ${displayName}! आपको प्यार और खुशियाँ मिलें।`
+            : `💖 It's 12:00 AM — Happy Anniversary, ${displayName}! Wishing you love and happiness.`);
         } else if (isAnniversaryToday) {
-          wishes.push(`💖 Happy Anniversary, ${name}! Cheers to your beautiful journey together.`);
+          wishes.push(userLanguage === 'hi'
+            ? `💖 सालगिरह मुबारक हो, ${displayName}! आपकी खूबसूरत यात्रा की शुभकामनाएं।`
+            : `💖 Happy Anniversary, ${displayName}! Cheers to your beautiful journey together.`);
         } else {
           const daysLeft = nextAnniversary.diff(today, 'day');
-          wishes.push(`💍 ${name}, your anniversary is in ${daysLeft} day(s) on ${nextAnniversary.format('MMMM DD')}.`);
+          wishes.push(userLanguage === 'hi'
+            ? `💍 ${displayName}, आपकी सालगिरह ${daysLeft} दिन में है ${nextAnniversary.format('MMMM DD')} को।`
+            : `💍 ${displayName}, your anniversary is in ${daysLeft} day(s) on ${nextAnniversary.format('MMMM DD')}.`);
         }
       } else {
-        wishes.push(`⚠️ Invalid Anniversary date format for ${name}`);
+        wishes.push(userLanguage === 'hi'
+          ? `⚠️ ${displayName} के लिए Anniversary फॉर्मेट गलत है`
+          : `⚠️ Invalid Anniversary date format for ${displayName}`);
       }
     }
 
+    const responseMessage = userLanguage === 'hi'
+      ? 'जन्मदिन और/या सालगिरह की शुभकामनाएं या काउंटडाउन'
+      : 'Birthday and/or Anniversary wish or countdown';
+
     res.json({
-      message: 'Birthday and/or Anniversary wish or countdown',
+      message: responseMessage,
       wishes,
     });
 
   } catch (error) {
     console.error('Error:', error);
-    res.status(500).json({ error: 'Something went wrong' });
+    
+    const userLanguage = req.user?.language || 'en';
+    const errorMsg = userLanguage === 'hi'
+      ? 'कुछ गलत हो गया'
+      : 'Something went wrong';
+      
+    res.status(500).json({ error: errorMsg });
   }
 };
-
 
 export const getReferralCodeByUserId = async (req, res) => {
   try {
@@ -2213,20 +2470,76 @@ export const getUserHistory = async (req, res) => {
   try {
     const { userId } = req.params;
 
+    // Pehle user find karo
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // History fetch karo
     const history = await UserHistory.find({ userId })
       .populate("logoId", "name image price")
       .sort({ createdAt: -1 });
 
-    res.status(200).json(history);
+    // User ki language check karo
+    const userLanguage = user.language || 'en';
+    
+    // Translate user name to Hindi if needed
+    let displayName = user.name;
+    if (userLanguage === 'hi') {
+      displayName = await translateToHindi(user.name);
+    }
+
+    // Response mein user details bhi include karo
+    res.status(200).json({
+      success: true,
+      message: userLanguage === 'hi' 
+        ? 'उपयोगकर्ता इतिहास सफलतापूर्वक प्राप्त हुआ'
+        : 'User history fetched successfully',
+      user: {
+        id: user._id,
+        name: displayName,  // Translated name if Hindi user
+        email: user.email,
+        mobile: user.mobile,
+        language: user.language || 'en'
+      },
+      history: history.map(item => {
+        // Logo name bhi translate karo agar logoId hai aur user Hindi hai
+        if (userLanguage === 'hi' && item.logoId && item.logoId.name) {
+          return {
+            ...item.toObject(),
+            logoId: {
+              ...item.logoId.toObject(),
+              name: translateToHindiSync(item.logoId.name) // Sync version for map
+            }
+          };
+        }
+        return item;
+      }),
+      totalCount: history.length
+    });
+
   } catch (error) {
     console.error("Error fetching user history:", error);
+    
+    // Error message in both languages
+    const errorMessages = {
+      en: { message: "Error fetching user history" },
+      hi: { message: "उपयोगकर्ता इतिहास प्राप्त करने में त्रुटि" }
+    };
+    
+    const userLanguage = req.user?.language || 'en';
+    
     res.status(500).json({
-      message: "Error fetching user history",
+      success: false,
+      message: errorMessages[userLanguage]?.message || errorMessages.en.message,
       error: error.message,
     });
   }
 };
-
 
 
 export const getAllReels = async (req, res) => {
@@ -2795,5 +3108,205 @@ export const sendGreetingNotification = async (req, res) => {
   } catch (err) {
     console.error("sendGreetingNotification error:", err);
     return res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+export const updateLanguage = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { language } = req.body;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    user.language = language;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Language updated successfully"
+    });
+
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Error" });
+  }
+};
+
+
+
+export const verifyOTPs = async (req, res) => {
+  const { idToken, fcmToken } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ error: "ID token is required" });
+  }
+
+  try {
+    // 1. Verify the Firebase ID Token
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+
+    // 2. Extract phone number from the verified token
+    const phoneNumber = decodedToken.phone_number;
+
+    if (!phoneNumber) {
+      return res.status(400).json({ error: "Phone number not found in token" });
+    }
+
+    // Extract mobile number from phone_number format (+911234567890 -> 1234567890)
+    const mobile = phoneNumber.replace('+91', '');
+
+    // 3. Find user in your database
+    let user = await User.findOne({ mobile });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found. Please request OTP first." });
+    }
+
+    // Static OTP bypass for special numbers (optional, but maintained for your requirement)
+    const staticOtpNumbers = ['9744037599', '9849008143'];
+    if (staticOtpNumbers.includes(mobile)) {
+      // For static numbers, we can skip token verification but we've already verified via Firebase
+      user.isVerified = true;
+      user.otp = null;
+      user.otpExpiry = null;
+    }
+
+    // For all users (including static numbers), update verification status
+    user.isVerified = true;
+    user.otp = null;
+    user.otpExpiry = null;
+
+    //  Store/update fcmToken if provided
+    if (fcmToken) user.fcmToken = fcmToken;
+
+    await user.save();
+
+    // 4. Return the EXACT SAME RESPONSE STRUCTURE
+    res.status(200).json({
+      message: "OTP verified successfully",
+      user
+    });
+
+  } catch (err) {
+    console.error("Token Verification Error:", err);
+
+    // Handle specific Firebase token errors
+    if (err.code === 'auth/id-token-expired') {
+      return res.status(400).json({ error: "Token has expired" });
+    }
+    if (err.code === 'auth/argument-error') {
+      return res.status(400).json({ error: "Invalid token" });
+    }
+
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+
+
+
+
+
+// ✅ Send message with optional images and socket
+export const sendMessageController = async (req, res) => {
+  try {
+    const { senderId, receiverId } = req.params;
+    const { message } = req.body;
+
+    if (!senderId || !receiverId) {
+      return res.status(400).json({ success: false, message: "Sender and receiver IDs are required" });
+    }
+
+    // Validate ObjectIds
+    if (!mongoose.Types.ObjectId.isValid(senderId) || !mongoose.Types.ObjectId.isValid(receiverId)) {
+      return res.status(400).json({ success: false, message: "Invalid sender or receiver ID" });
+    }
+
+    // Fetch sender user
+    const sender = await User.findById(senderId).lean();
+    if (!sender) return res.status(404).json({ success: false, message: "Sender not found" });
+
+    // Optional: Check if receiverId exists in sender's customers (warning only, won't block)
+    const customer = sender.customers?.find(cust => cust._id.toString() === receiverId);
+    if (!customer) console.warn("⚠️ Receiver is not a customer of sender, but message will still be sent.");
+
+    // Upload images if any
+    let images = [];
+    if (req.files && req.files.images) {
+      const files = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
+      for (const file of files) {
+const result = await cloudinary.uploader.upload(file.tempFilePath, { folder: 'chat_images' });
+        images.push(result.secure_url);
+      }
+    }
+
+    // Save chat regardless of receiver existence
+    const newChat = new Chat({
+      senderId,
+      receiverId,
+      message: message || '',
+      images,
+    });
+
+    const savedChat = await newChat.save();
+
+    // Emit via Socket.IO (room will still be senderId_receiverId)
+    const io = req.app.get('io');
+    if (io) {
+      const roomId = `${senderId}_${receiverId}`;
+      io.to(roomId).emit('receiveMessage', savedChat);
+      console.log(`📤 Message emitted to room: ${roomId}`);
+    }
+
+    return res.status(201).json({ success: true, message: "Message sent successfully", chat: savedChat });
+
+  } catch (error) {
+    console.error("❌ Send message error:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+  }
+};
+
+
+// ✅ Get chat messages between two users using route params
+// ✅ Get chat between two users
+// ✅ Get chat messages between two users (or sender + receiverId even if receiver not in User)
+export const getChatMessagesController = async (req, res) => {
+  try {
+    const { senderId, receiverId } = req.params;
+
+    if (!senderId || !receiverId) {
+      return res.status(400).json({ success: false, message: "Sender and receiver IDs are required" });
+    }
+
+    // Validate ObjectIds
+    if (!mongoose.Types.ObjectId.isValid(senderId) || !mongoose.Types.ObjectId.isValid(receiverId)) {
+      return res.status(400).json({ success: false, message: "Invalid sender or receiver ID" });
+    }
+
+    // Fetch chats between sender and receiver (both directions)
+    const chats = await Chat.find({
+      $or: [
+        { senderId, receiverId },
+        { senderId: receiverId, receiverId: senderId }
+      ]
+    }).sort({ createdAt: 1 });
+
+    // Optionally emit via Socket.IO if you want to notify client that chats were fetched
+    const io = req.app.get('io');
+    if (io) {
+      const roomId = `${senderId}_${receiverId}`;
+      io.to(roomId).emit('chatsFetched', chats);
+      console.log(`📤 Chats emitted to room: ${roomId}`);
+    }
+
+    return res.status(200).json({ success: true, chats });
+
+  } catch (error) {
+    console.error("❌ Get chat error:", error);
+    return res.status(500).json({ success: false, message: "Server error", error: error.message });
   }
 };

@@ -15,6 +15,7 @@ import FormData from "form-data";
 import sharp from "sharp";
 
 import dotenv from 'dotenv';
+import User from "../Models/User.js";
 
 dotenv.config();  // Load environment variables from .env file
 
@@ -266,26 +267,88 @@ export const deletePoster = async (req, res) => {
 
   
   
+async function translateToHindiBulk(texts) {
+  const translations = {};
+  const uniqueTexts = [...new Set(texts.filter(t => t && t.trim() !== ""))];
+
+  await Promise.all(
+    uniqueTexts.map(async (text) => {
+      try {
+        if (/[\u0900-\u097F]/.test(text)) {
+          translations[text] = text;
+          return;
+        }
+
+        const url =
+          "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=" +
+          encodeURIComponent(text);
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        translations[text] = data?.[0]?.[0]?.[0] || text;
+      } catch {
+        translations[text] = text;
+      }
+    })
+  );
+
+  return translations;
+}
+
 export const getAllPosters = async (req, res) => {
   try {
+    const { userId } = req.params;
+
+    let lang = "en";
+
+    if (userId) {
+      const user = await User.findById(userId).select("language");
+      if (user) lang = user.language || "en";
+    }
+
     let posters = await Poster.find().sort({ createdAt: -1 });
 
-    // Map posters to adjust `images` field
+    let translationMap = {};
+
+    if (lang === "hi") {
+      const textsToTranslate = [];
+
+      posters.forEach(p => {
+        if (p.categoryName) textsToTranslate.push(p.categoryName);
+        if (p.name && p.name.trim() !== "") textsToTranslate.push(p.name);
+      });
+
+      translationMap = await translateToHindiBulk(textsToTranslate);
+    }
+
     posters = posters.map(poster => {
-      const posterImageUrl = poster.posterImage?.url || null;
+      const obj = poster.toObject();
+      const posterImageUrl = obj.posterImage?.url || null;
+
+      if (lang === "hi") {
+        if (obj.categoryName)
+          obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
+
+        if (obj.name && obj.name.trim() !== "")
+          obj.name = translationMap[obj.name] || obj.name;
+      }
 
       return {
-        ...poster.toObject(),  // convert Mongoose doc to plain JS object
+        ...obj,
         images: posterImageUrl ? [posterImageUrl] : [],
       };
     });
 
+    // ✅ SAME RESPONSE
     res.status(200).json(posters);
+
   } catch (error) {
     console.error("Error fetching posters:", error);
-    res.status(500).json({ message: 'Error fetching posters', error });
+    res.status(500).json({ message: "Error fetching posters", error });
   }
 };
+
 
 
 
