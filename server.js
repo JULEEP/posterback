@@ -41,6 +41,8 @@ const __dirname = path.dirname(__filename);
 // ------------------------
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+app.use(express.static(path.join(__dirname, 'public')));
+
 app.use(cors({
   origin: [
     'http://localhost:3000', 
@@ -66,6 +68,12 @@ app.use(fileUpload({
   tempFileDir: '/tmp/',
 }));
 
+
+// Serve UI on root
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
 // ------------------------
 // Database
 // ------------------------
@@ -75,9 +83,12 @@ connectDatabase();
 // Cron Jobs
 // ------------------------
 
+// Log that cron jobs are being scheduled
+console.log('⏰ Scheduling cron jobs...');
+
 // Daily Birthday & Anniversary SMS at 12:00 AM
 cron.schedule('0 0 * * *', async () => {
-  console.log('🔔 Running birthday/anniversary SMS cron...');
+  console.log('🔔 Running birthday/anniversary SMS cron at:', new Date().toISOString());
   const now = new Date();
   const todayDay = now.getDate();
   const todayMonth = now.getMonth() + 1;
@@ -94,6 +105,7 @@ cron.schedule('0 0 * * *', async () => {
     });
 
     for (const user of birthdayUsers) await sendBirthdaySMS(user.mobile);
+    console.log(`✅ Birthday SMS sent to ${birthdayUsers.length} users`);
 
     // Anniversary
     const anniversaryUsers = await User.find({
@@ -106,16 +118,19 @@ cron.schedule('0 0 * * *', async () => {
     });
 
     for (const user of anniversaryUsers) await sendAnniversarySMS(user.mobile);
+    console.log(`✅ Anniversary SMS sent to ${anniversaryUsers.length} users`);
 
-    console.log('✅ Birthday & anniversary SMS sent successfully.');
+    console.log('✅ Birthday & anniversary SMS sent successfully at:', new Date().toISOString());
   } catch (err) {
-    console.error('❌ Cron job failed:', err);
+    console.error('❌ Birthday/Anniversary cron job failed:', err);
   }
 });
 
+console.log('✅ Birthday/Anniversary cron job scheduled for 12:00 AM');
+
 // Daily Greeting Notifications at 9 AM
 cron.schedule('0 9 * * *', async () => {
-  console.log('⏰ Running daily greeting notifications...');
+  console.log('⏰ Running daily greeting notifications at:', new Date().toISOString());
   try {
     const users = await User.find({ fcmToken: { $ne: null } });
     for (const user of users) {
@@ -126,11 +141,60 @@ cron.schedule('0 9 * * *', async () => {
         data: { type: "DAILY_GREETING" }
       });
     }
-    console.log(`✅ Sent daily greetings to ${users.length} users.`);
+    console.log(`✅ Sent daily greetings to ${users.length} users at:`, new Date().toISOString());
   } catch (err) {
     console.error('❌ Daily greeting cron failed:', err);
   }
 });
+
+console.log('✅ Daily greeting cron job scheduled for 9:00 AM');
+
+// Trial Expiry Cron - Run at 12:05 AM (5 minutes after midnight)
+// 7 days trial from createdAt
+cron.schedule("5 0 * * *", async () => {
+  try {
+    console.log("🔔 Running Trial Expiry Cron at:", new Date().toISOString());
+
+    // Calculate date 7 days ago
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    // Update users who:
+    // 1. Have free7DayTrial = true
+    // 2. Created more than 7 days ago (createdAt < 7 days ago)
+    // 3. Don't have any active subscription
+    const result = await User.updateMany(
+      {
+        free7DayTrial: true,
+        createdAt: { $lt: sevenDaysAgo },
+        $or: [
+          { isSubscribedPlan: false },
+          { isSubscribedPlan: { $exists: false } }
+        ]
+      },
+      {
+        $set: { free7DayTrial: false }
+      }
+    );
+
+    console.log(`✅ Trial Expiry Cron completed. Expired trials: ${result.modifiedCount} at ${new Date().toISOString()}`);
+    
+    // Optional: Log some sample users that got expired
+    if (result.modifiedCount > 0) {
+      const expiredUsers = await User.find({
+        free7DayTrial: false,
+        createdAt: { $lt: sevenDaysAgo }
+      }).limit(5).select('name email createdAt');
+      
+      console.log('Sample expired users:', expiredUsers);
+    }
+
+  } catch (error) {
+    console.error("❌ Trial Expiry Cron Error:", error);
+  }
+});
+
+console.log('✅ Trial expiry cron job scheduled for 12:05 AM (based on createdAt)');
 
 // ------------------------
 // Routes
@@ -232,6 +296,15 @@ io.on('connection', (socket) => {
 // Start server
 // ------------------------
 const PORT = process.env.PORT || 6002;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running at http://0.0.0.0:${PORT}`);
+const host = 'localhost'; // you can replace with server IP if needed
+
+server.listen(PORT, host, () => {
+  console.log(`🚀 Server running at: http://${host}:${PORT}`);
+  console.log(`📌 Open http://${host}:${PORT}/index.html to access the UI`);
+
+  console.log('📊 All cron jobs scheduled:');
+  console.log('   - Birthday/Anniversary: 12:00 AM');
+  console.log('   - Daily Greetings: 9:00 AM');
+  console.log('   - Trial Expiry: 12:05 AM (based on createdAt)');
+  console.log('✅ Server startup complete at:', new Date().toISOString());
 });

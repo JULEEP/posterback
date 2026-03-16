@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Background Removal</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 30px;
+      background-color: #f4f4f4;
+    }
+
+    h2 {
+      color: #333;
+    }
+
+    #dropZone {
+      width: 300px;
+      height: 200px;
+      border: 2px dashed #aaa;
+      border-radius: 10px;
+      margin: 20px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #aaa;
+      cursor: pointer;
+      transition: border-color 0.3s, color 0.3s;
+    }
+
+    #dropZone.dragover {
+      border-color: #007bff;
+      color: #007bff;
+    }
+
+    #imagePreview, #result {
+      max-width: 300px;
+      margin-top: 20px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+
+    button {
+      margin-top: 15px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+      border: none;
+      border-radius: 5px;
+      background-color: #007bff;
+      color: white;
+    }
+
+    button:disabled {
+      background-color: #aaa;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Background Removal Tool</h2>
+
+<div id="dropZone">Drag & Drop Image Here or Click</div>
+<input type="file" id="imageInput" style="display:none">
+
+<img id="imagePreview" src="" alt="Preview" style="display:none">
+<br>
+<button id="removeBtn" onclick="removeBg()" disabled>Remove Background</button>
+
+<br>
+<h3>Result:</h3>
+<img id="result" src="" alt="Result" style="display:none">
+
+<script>
+const dropZone = document.getElementById('dropZone');
+const imageInput = document.getElementById('imageInput');
+const imagePreview = document.getElementById('imagePreview');
+const resultImage = document.getElementById('result');
+const removeBtn = document.getElementById('removeBtn');
+
+let selectedFile = null;
+
+// Click on dropZone opens file input
+dropZone.addEventListener('click', () => imageInput.click());
+
+// Handle file input change
+imageInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+// Drag & Drop events
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
+
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  handleFiles(e.dataTransfer.files);
+});
+
+function handleFiles(files) {
+  if (files.length === 0) return;
+  selectedFile = files[0];
+
+  // Show preview
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    imagePreview.src = e.target.result;
+    imagePreview.style.display = 'block';
+    removeBtn.disabled = false;
+  }
+  reader.readAsDataURL(selectedFile);
+}
+
+// Remove background
+async function removeBg() {
+  if (!selectedFile) return;
+
+  removeBtn.disabled = true;
+  removeBtn.textContent = "Processing...";
+
+  const formData = new FormData();
+  formData.append('image', selectedFile);
+
+  try {
+    const response = await fetch('/api/users/remove-bg', {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) throw new Error('Background removal failed');
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+
+    resultImage.src = url;
+    resultImage.style.display = 'block';
+    removeBtn.textContent = "Remove Background";
+
+  } catch (err) {
+    alert(err.message);
+    removeBtn.textContent = "Remove Background";
+  } finally {
+    removeBtn.disabled = false;
+  }
+}
+</script>
+
+</body>
+</html>

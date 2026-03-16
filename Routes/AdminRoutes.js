@@ -45,7 +45,9 @@ import {
     deleteAudio,
     updateLogoCategory,
     deleteLogoCategory,
+    getAllLogosForAdmin,
 } from "../Controller/AdminController.js";
+import { getAllCategoriesForAdmin } from "../Controller/CategoryController.js";
 
 const router = express.Router();
 
@@ -66,7 +68,8 @@ router.put('/updatecontactmessage/:id', updateContactMessageById);
 router.delete('/deletecontactmessage/:id', deleteContactMessageById);
 router.get('/dashboard', getDashboardData);
 router.post('/createlogo', createLogo);
-router.get('/getlogos', getAllLogos);
+router.get('/getlogos/:userId', getAllLogos);
+router.get('/getlogos', getAllLogosForAdmin);
 router.put('/updatelogo/:logoId', updateLogo);
 router.delete('/deletelogo/:logoId', deleteLogo);
 router.post('/createbusinesscard', createBusinessCard);
@@ -85,7 +88,8 @@ router.put("/update-status/:redemptionId", updateRedemptionStatus);
 router.get("/getredemption-requests", getAllRedemptionRequests);
 
 router.post('/createlogocategory', createLogoCategory);
-router.get('/getlogocategories', getAllLogoCategories);
+router.get('/getlogocategories/:userId', getAllLogoCategories);
+router.get('/getlogocategories', getAllCategoriesForAdmin);
 router.put('/updatelogocategory/:id', updateLogoCategory);
 router.delete('/deletelogocategory/:id', deleteLogoCategory);
 

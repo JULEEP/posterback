@@ -16,6 +16,7 @@ import WalletRedemption from "../Models/WalletRedemption.js";
 import LogoCategory from "../Models/LogoCategory.js";
 import Reel from "../Models/Reel.js";
 import Audio from "../Models/Audio.js";
+import Notification from "../Models/Notification.js";
 
 
 
@@ -492,10 +493,28 @@ export const createLogo = async (req, res) => {
 
 
 
-// ✅ Get all logos
+// ✅ Get all logos with language support
+// ✅ Get all logos with language support (logo name + category name both translate)
 export const getAllLogos = async (req, res) => {
   try {
-    const { logoCategoryId } = req.query; // optional query
+    const { userId } = req.params; // userId from params
+    const { logoCategoryId } = req.query; // optional query for filtering
+    
+    // Default language
+    let userLanguage = 'en';
+    
+    // If userId is provided, fetch user's language preference
+    if (userId) {
+      try {
+        const user = await User.findById(userId).select('language');
+        if (user && user.language) {
+          userLanguage = user.language;
+        }
+      } catch (userError) {
+        console.error("Error fetching user language:", userError);
+        // Continue with default language
+      }
+    }
 
     // Agar logoCategoryId diya ho to filter, warna sab
     const filter = logoCategoryId ? { logoCategoryId } : {};
@@ -504,7 +523,74 @@ export const getAllLogos = async (req, res) => {
       .populate("logoCategoryId", "name image") // populate category info
       .sort({ createdAt: -1 });
 
+    // If user prefers Hindi, translate both logo name and category name
+    if (userLanguage === 'hi') {
+      // Translate each logo's name and category name
+      const translatedLogos = await Promise.all(
+        logos.map(async (logo) => {
+          // Convert to plain object
+          const logoObj = logo.toObject();
+          
+          // ✅ Translate logo name
+          if (logoObj.name) {
+            logoObj.name = await translateToHindi(logoObj.name);
+          }
+          
+          // ✅ Translate category name if it exists
+          if (logoObj.logoCategoryId && logoObj.logoCategoryId.name) {
+            logoObj.logoCategoryId.name = await translateToHindi(logoObj.logoCategoryId.name);
+          }
+          
+          return logoObj;
+        })
+      );
+      
+      return res.status(200).json(translatedLogos);
+    }
+
+    // For English or other languages, return original logos
     res.status(200).json(logos);
+    
+  } catch (error) {
+    console.error("Error fetching logos:", error);
+    
+    // Try to get user language for error message
+    let errorLang = 'en';
+    if (req.params.userId) {
+      try {
+        const user = await User.findById(req.params.userId).select('language');
+        errorLang = user?.language || 'en';
+      } catch {
+        // Ignore error
+      }
+    }
+    
+    const errorMsg = errorLang === 'hi' 
+      ? 'लोगो प्राप्त करने में त्रुटि' 
+      : 'Error fetching logos';
+    
+    res.status(500).json({
+      message: errorMsg,
+      error: error.message,
+    });
+  }
+};
+
+
+
+export const getAllLogosForAdmin = async (req, res) => {
+  try {
+    const { logoCategoryId } = req.query; // optional filter
+
+    // Filter agar logoCategoryId diya ho
+    const filter = logoCategoryId ? { logoCategoryId } : {};
+
+    const logos = await Logo.find(filter)
+      .populate("logoCategoryId", "name image")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json(logos);
+
   } catch (error) {
     console.error("Error fetching logos:", error);
     res.status(500).json({
@@ -955,10 +1041,117 @@ export const createLogoCategory = async (req, res) => {
 };
 
 // ✅ Get All Logo Categories
+// Translation function using Google Translate API
+async function translateToHindi(text) {
+  try {
+    // Agar text already Hindi mein hai to waise hi return karo
+    if (/[\u0900-\u097F]/.test(text)) {
+      return text;
+    }
+    
+    // Google Translate API endpoint
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=hi&dt=t&q=' + encodeURIComponent(text);
+    
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    // Extract translated text from response
+    if (data && data[0] && data[0][0] && data[0][0][0]) {
+      return data[0][0][0]; // Translated text in Hindi
+    }
+    
+    return text; // Fallback to original text if translation fails
+  } catch (error) {
+    console.error('Translation error:', error);
+    return text; // Fallback to original text
+  }
+}
+
+// ✅ Get All Logo Categories
 export const getAllLogoCategories = async (req, res) => {
   try {
+    // Get userId from params
+    const { userId } = req.params;
+    
+    // Default language
+    let userLanguage = 'en';
+    
+    // If userId is provided, fetch user's language preference
+    if (userId) {
+      try {
+        const user = await User.findById(userId).select('language');
+        if (user && user.language) {
+          userLanguage = user.language;
+        }
+      } catch (userError) {
+        console.error("Error fetching user language:", userError);
+        // Continue with default language if user fetch fails
+      }
+    }
+    
+    // Fetch all logo categories
     const categories = await LogoCategory.find().sort({ createdAt: -1 });
+    
+    // If user prefers Hindi, translate category names
+    if (userLanguage === 'hi') {
+      // Create a new array with translated names
+      const translatedCategories = await Promise.all(
+        categories.map(async (category) => {
+          // Convert to plain object so we can modify it
+          const categoryObj = category.toObject();
+          
+          // Translate the category name if it exists
+          if (categoryObj.name) {
+            categoryObj.name = await translateToHindi(categoryObj.name);
+          }
+          
+          return categoryObj;
+        })
+      );
+      
+      return res.status(200).json(translatedCategories);
+    }
+    
+    // For English or other languages, return original categories
     res.status(200).json(categories);
+    
+  } catch (error) {
+    console.error("Error fetching logo categories:", error);
+    
+    // Determine error message language based on userLanguage (if available)
+    // We might not have userLanguage here if error occurs before that
+    const errorMsg = req.params.userId ? 
+      (await getUserLanguage(req.params.userId) === 'hi' 
+        ? 'लोगो श्रेणियाँ प्राप्त करने में त्रुटि' 
+        : 'Error fetching logo categories')
+      : 'Error fetching logo categories';
+    
+    res.status(500).json({
+      message: errorMsg,
+      error: error.message,
+    });
+  }
+};
+
+// Helper function to get user language (optional, for error messages)
+async function getUserLanguage(userId) {
+  try {
+    const user = await User.findById(userId).select('language');
+    return user?.language || 'en';
+  } catch {
+    return 'en';
+  }
+}
+
+
+
+// ✅ Get All Logo Categories (Simple Version)
+export const getAllLogoCategoriesForAdmin = async (req, res) => {
+  try {
+    const categories = await LogoCategory.find().sort({ createdAt: -1 });
+
+    res.status(200).json(categories);
+
   } catch (error) {
     console.error("Error fetching logo categories:", error);
     res.status(500).json({
@@ -1034,12 +1227,15 @@ export const deleteLogoCategory = async (req, res) => {
 
 export const createReel = async (req, res) => {
   try {
+    // ✅ Check if video is provided
     if (!req.files || !req.files.video) {
       return res.status(400).json({ message: "Reel video is required." });
     }
 
+    const { hotTop } = req.body; // get hotTop from request
     const file = req.files.video;
 
+    // ✅ Upload video to Cloudinary with overlay
     const result = await cloudinary.uploader.upload(file.tempFilePath, {
       folder: "reels-videos",
       resource_type: "video",
@@ -1047,7 +1243,7 @@ export const createReel = async (req, res) => {
         {
           overlay: {
             font_family: "Arial",
-            font_size: 28,      // 👈 chhota
+            font_size: 28,
             font_weight: "bold",
             text: "EDITEZY",
           },
@@ -1055,23 +1251,43 @@ export const createReel = async (req, res) => {
           x: 12,
           y: 12,
           color: "#ffffff",
-          opacity: 35,        // 👈 soft look
+          opacity: 35,
         },
       ],
     });
 
+    // ✅ Create Reel document
     const newReel = new Reel({
       videoUrl: result.secure_url,
       likeCount: 0,
       isLiked: false,
+      hotTop: hotTop === "true" || hotTop === true,
     });
 
-    res.status(201).json(await newReel.save());
+    const savedReel = await newReel.save();
+
+    // 🔔 Notify all users about the new reel
+    const allUsers = await User.find({}, "_id"); // get only user IDs
+    const notifications = allUsers.map(user => ({
+      userId: user._id,
+      title: "New Reel Added",
+      message: `A new reel has been uploaded. Check it out!`,
+    }));
+
+    if (notifications.length > 0) {
+      await Notification.insertMany(notifications);
+    }
+
+    res.status(201).json({
+      message: "Reel created successfully and all users notified.",
+      reel: savedReel
+    });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("Error creating reel:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };
-
 
 
 export const getAllReels = async (req, res) => {
@@ -1148,6 +1364,11 @@ export const updateReel = async (req, res) => {
       reel.isLiked = req.body.isLiked;
     }
 
+    // ✅ Update hotTop field if provided
+    if (req.body.hotTop !== undefined) {
+      reel.hotTop = req.body.hotTop;
+    }
+
     const updatedReel = await reel.save();
 
     res.status(200).json({
@@ -1159,7 +1380,6 @@ export const updateReel = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-
 
 
 export const deleteReel = async (req, res) => {

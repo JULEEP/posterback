@@ -51,7 +51,12 @@ import {
      updateLanguage,
      verifyOTPs,
      sendMessageController,
-     getChatMessagesController
+     getChatMessagesController,
+     getAllHotTopReels,
+     getNotificationsByUserId,
+     deleteNotificationsByIds,
+     googleLogin,
+     removeBackground
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -118,6 +123,7 @@ router.post("/user-history", saveUserHistory);
 router.get("/user-history/:userId", getUserHistory);
 
 router.get("/allreels/:userId", getAllReels);
+router.get("/allhottopicreels/:userId", getAllHotTopReels);
 router.post("/likereel/:reelId/:userId", likeReel);
 router.post("/unlikereel/:reelId/:userId", unlikeReel);
 router.post("/panchang/:userId", getPanchang);
@@ -126,6 +132,12 @@ router.put('/update-lang/:userId', updateLanguage);
 router.post('/verify-firebase-otp', verifyOTPs);
 router.post("/sendchat/:senderId/:receiverId", sendMessageController);
 router.get("/getchat/:senderId/:receiverId", getChatMessagesController);
+
+router.get("/getnotifications/:userId", getNotificationsByUserId);
+router.delete("/deletenotifications/:userId", deleteNotificationsByIds);
+
+router.post('/api/auth/google', googleLogin);
+router.post("/remove-bg", removeBackground);
 
 
 

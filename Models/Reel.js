@@ -8,6 +8,10 @@ const reelSchema = new mongoose.Schema({
     type: Number,
     default: 0,
   },
+    hotTop: {          // ✅ Added field
+      type: Boolean,
+      default: false,
+    },
   isLiked: {
     type: Boolean,
     default: false,

@@ -117,19 +117,24 @@ export const payWithRazorpay = async (req, res) => {
     endDate.setFullYear(endDate.getFullYear() + 1);
 
     // Add plan to user
-    user.subscribedPlans.push({
-      planId: plan._id,
-      name: plan.name,
-      originalPrice: plan.originalPrice,
-      offerPrice,
-      discountPercentage: plan.discountPercentage,
-      duration: plan.duration,
-      startDate,
-      endDate,
-      isPurchasedPlan: true,
-    });
+   // Add plan to user
+user.subscribedPlans.push({
+  planId: plan._id,
+  name: plan.name,
+  originalPrice: plan.originalPrice,
+  offerPrice,
+  discountPercentage: plan.discountPercentage,
+  duration: plan.duration,
+  startDate,
+  endDate,
+  isPurchasedPlan: true,
+});
 
-    await user.save();
+// ✅ IMPORTANT LINE
+user.isSubscribedPlan = true;
+
+await user.save();
+
 
     // ✅ Referral wallet credit
     if (user.referredBy) {
@@ -217,6 +222,8 @@ export const purchasePlanSimple = async (req, res) => {
       endDate,
       isPurchasedPlan: true,
     });
+
+    user.isSubscribedPlan = true;
 
     await user.save();
 

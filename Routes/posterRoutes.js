@@ -23,7 +23,8 @@ import {
   updateBanner,
   deleteBanner,
   getWeeklyPosters,
-  removeTextFromImage
+  removeTextFromImage,
+  getAllPostersForAdmin
 } from '../Controller/PosterController.js';
 import fileUpload from "express-fileupload";
 
@@ -34,6 +35,7 @@ router.post('/create-poster', createPoster);
 router.post('/create-canvaposter', canvasCreatePoster);
 router.put('/update/:id', updatePoster);
 router.get('/getallposter/:userId', getAllPosters); 
+router.get('/getallposter', getAllPostersForAdmin); 
 router.put('/editposter/:posterId', editPoster);
 router.delete('/deleteposter/:posterId', deletePoster);
 router.get('/getposterbycategory', getPostersByCategory); 
@@ -52,7 +54,7 @@ router.get("/getbanners", getAllBanners);
 router.put("/updatebanner/:id", updateBanner);
 router.delete("/deletebanner/:id", deleteBanner);
 
-router.get('/weeklyposters', getWeeklyPosters); 
+router.get('/weeklyposters/:userId', getWeeklyPosters); 
 router.post('/removaltext/:userId', removeTextFromImage); 
 
 

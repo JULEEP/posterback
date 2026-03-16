@@ -351,6 +351,32 @@ export const getAllPosters = async (req, res) => {
 
 
 
+export const getAllPostersForAdmin = async (req, res) => {
+  try {
+    const posters = await Poster.find().sort({ createdAt: -1 });
+
+    const formattedPosters = posters.map(poster => {
+      const obj = poster.toObject();
+      const posterImageUrl = obj.posterImage?.url || null;
+
+      return {
+        ...obj,
+        images: posterImageUrl ? [posterImageUrl] : [],
+      };
+    });
+
+    res.status(200).json(formattedPosters);
+
+  } catch (error) {
+    console.error("Error fetching posters:", error);
+    res.status(500).json({
+      message: "Error fetching posters",
+      error: error.message,
+    });
+  }
+};
+
+
 
 // ✅ Get posters by categoryName using query param
 export const getPostersByCategory = async (req, res) => {
@@ -1141,44 +1167,66 @@ export const deleteBanner = async (req, res) => {
 
 export const getWeeklyPosters = async (req, res) => {
   try {
-    const posters = await Poster.find().sort({ categoryName: 1 });
+    const { userId } = req.params;
+    let lang = "en";
 
-    if (!posters.length) return res.status(200).json({});
-
-    const today = moment().startOf("day");
-
-    // Week ke 7 din aaj se start
-    const weekDays = [];
-    const weekPosters = {};
-    for (let i = 0; i < 7; i++) {
-      const day = moment(today).add(i, "days").format("dddd");
-      weekDays.push(day);
-      weekPosters[day] = [];
+    // 🔹 Get user language if provided
+    if (userId) {
+      const user = await User.findById(userId).select("language");
+      if (user) lang = user.language || "en";
     }
 
-    // Posters ko correct day ke array me push karo
-    posters.forEach(poster => {
-      const posterDay = poster.categoryName; // Sunday, Wednesday, etc.
+    // 🔹 Fetch all posters
+    const posters = await Poster.find().sort({ categoryName: 1 });
+    if (!posters.length) return res.status(200).json({});
 
-      // Agar posterDay weekDays me hai → wahi day ke array me push
-      if (weekDays.includes(posterDay)) {
-        weekPosters[posterDay].push({
-          ...poster.toObject(),
-          images: poster.posterImage?.url ? [poster.posterImage.url] : []
-        });
+    // 🔹 Determine today
+    const today = moment().format("dddd"); // e.g., "Monday"
+    const todayLower = today.toLowerCase();
+
+    let translationMap = {};
+    if (lang === "hi") {
+      const textsToTranslate = [];
+      posters.forEach(p => {
+        if (p.categoryName) textsToTranslate.push(p.categoryName);
+        if (p.name && p.name.trim() !== "") textsToTranslate.push(p.name);
+      });
+      if (textsToTranslate.length > 0) {
+        translationMap = await translateToHindiBulk([...new Set(textsToTranslate)]);
       }
-    });
+    }
 
-    res.status(200).json(weekPosters);
+    // 🔹 Filter posters for today only
+    const todayPosters = posters
+      .filter(p => p.categoryName && p.categoryName.toLowerCase().trim() === todayLower)
+      .map(poster => {
+        const obj = poster.toObject();
+
+        // Apply translation if needed
+        if (lang === "hi") {
+          if (obj.categoryName) obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
+          if (obj.name && obj.name.trim() !== "") obj.name = translationMap[obj.name] || obj.name;
+        }
+
+        return {
+          ...obj,
+          images: obj.posterImage?.url ? [obj.posterImage.url] : []
+        };
+      });
+
+    // 🔹 Prepare response structure: { "Monday": [...] } or whatever today is
+    const response = {};
+    if (todayPosters.length) {
+      response[today] = todayPosters;
+    }
+
+    res.status(200).json(response);
 
   } catch (error) {
-    console.error("Error fetching weekly posters:", error);
-    res.status(500).json({ message: "Error fetching weekly posters", error });
+    console.error("Error fetching today's posters:", error);
+    res.status(500).json({ message: "Error fetching today's posters", error });
   }
 };
-
-
-
 
 
 export const removeTextFromImage = async (req, res) => {
