@@ -2593,16 +2593,31 @@ export const getAllReels = async (req, res) => {
 export const getAllHotTopReels = async (req, res) => {
   try {
     const { userId } = req.params; // sirf receive kar rahe hain
-
     console.log("UserId:", userId);
 
-    // ✅ Fetch only hotTop: true
+    // ✅ Fetch user info
+    const user = await User.findById(userId).select('name email mobile');
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // ✅ Fetch only hotTop: true reels
     const reels = await Reel.find({ hotTop: true }).sort({ createdAt: -1 });
 
+    // ✅ Embed user info in each reel
+    const reelsWithUser = reels.map(reel => ({
+      ...reel.toObject(), // convert Mongoose doc to plain object
+      user: {
+        name: user.name,
+        email: user.email,
+        mobile: user.mobile
+      }
+    }));
+
     res.status(200).json({
-      userId,
-      reels,
+      reels: reelsWithUser
     });
+
   } catch (error) {
     console.error("Error fetching HotTop reels:", error);
     res.status(500).json({

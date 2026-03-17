@@ -48,7 +48,7 @@
     "nodemon": "^3.1.9",
     "openai": "^4.80.0",
     "pdfkit": "^0.15.2",
-    "pg-sdk-node": "https://phonepe.mycloudrepo.io/public/repositories/phonepe-pg-sdk-node/releases/v2/phonepe-pg-sdk-node.tgz",
+    "pg-sdk-node": "^2.0.2",
     "puppeteer": "^23.11.1",
     "puppeteer-core": "^23.11.1",
     "qrcode": "^1.5.4",

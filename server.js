@@ -11,6 +11,10 @@ import fileUpload from 'express-fileupload';
 import cron from 'node-cron';
 import { Server } from 'socket.io';
 import cloudinary from './config/cloudinary.js';
+import dns from 'dns';
+
+// ✅ Fix DNS issue (MongoDB Atlas SRV)
+dns.setServers(['8.8.8.8', '8.8.4.4']);
 
 // Routes
 import UserRoutes from './Routes/userRoutes.js';
@@ -51,7 +55,11 @@ app.use(cors({
     'https://ezystudio-zu8y.vercel.app', 
     'https://editezy.com', 
     'https://posternova.vercel.app', 
-    'http://31.97.206.144:3065'
+    'http://31.97.206.144:3065',
+    'http://31.97.206.144:8058',
+    'http://31.97.206.144:8059',
+    'https://dreamtoday.in',
+    'https://admin.dreamtoday.in'
   ],
   methods: ['GET','POST','PUT','DELETE','OPTIONS'],
   credentials: true
@@ -67,7 +75,6 @@ app.use(fileUpload({
   useTempFiles: true,
   tempFileDir: '/tmp/',
 }));
-
 
 // Serve UI on root
 app.get("/", (req, res) => {
@@ -199,7 +206,7 @@ console.log('✅ Trial expiry cron job scheduled for 12:05 AM (based on createdA
 // ------------------------
 // Routes
 // ------------------------
-app.get("/", (req, res) => {
+app.get("/test", (req, res) => {
   res.json({ status: "success", message: "Welcome to Poster Service!" });
 });
 
@@ -296,11 +303,11 @@ io.on('connection', (socket) => {
 // Start server
 // ------------------------
 const PORT = process.env.PORT || 6002;
-const host = 'localhost'; // you can replace with server IP if needed
 
-server.listen(PORT, host, () => {
-  console.log(`🚀 Server running at: http://${host}:${PORT}`);
-  console.log(`📌 Open http://${host}:${PORT}/index.html to access the UI`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running at: http://localhost:${PORT}`);
+  console.log(`📌 Network access: http://31.97.206.144:${PORT}`);
+  console.log(`📌 Open http://localhost:${PORT}/index.html to access the UI`);
 
   console.log('📊 All cron jobs scheduled:');
   console.log('   - Birthday/Anniversary: 12:00 AM');

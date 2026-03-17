@@ -2,153 +2,414 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Background Removal</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Text Remover - Transparent Erase</title>
   <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
     body {
-      font-family: Arial, sans-serif;
-      text-align: center;
+      font-family: 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 20px;
       padding: 30px;
-      background-color: #f4f4f4;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
     }
 
-    h2 {
+    h1 {
       color: #333;
+      margin-bottom: 10px;
     }
 
-    #dropZone {
-      width: 300px;
-      height: 200px;
-      border: 2px dashed #aaa;
-      border-radius: 10px;
-      margin: 20px auto;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #aaa;
+    .upload-area {
+      background: #f8f9fa;
+      border: 3px dashed #007bff;
+      border-radius: 15px;
+      padding: 40px;
+      text-align: center;
       cursor: pointer;
-      transition: border-color 0.3s, color 0.3s;
+      margin-bottom: 30px;
     }
 
-    #dropZone.dragover {
-      border-color: #007bff;
+    .upload-area:hover {
+      background: #e3f2fd;
+    }
+
+    .upload-icon {
+      font-size: 50px;
       color: #007bff;
     }
 
-    #imagePreview, #result {
-      max-width: 300px;
-      margin-top: 20px;
-      border: 1px solid #ccc;
-      border-radius: 5px;
+    .canvas-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
     }
 
-    button {
-      margin-top: 15px;
-      padding: 10px 20px;
-      font-size: 16px;
-      cursor: pointer;
+    .canvas-box {
+      background: #f8f9fa;
+      border-radius: 10px;
+      padding: 15px;
+    }
+
+    .canvas-box h3 {
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    canvas {
+      width: 100%;
+      height: 350px;
+      border: 2px solid #ddd;
+      border-radius: 8px;
+      /* Checkerboard background for transparency */
+      background-image: 
+        linear-gradient(45deg, #ccc 25%, transparent 25%),
+        linear-gradient(-45deg, #ccc 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #ccc 75%),
+        linear-gradient(-45deg, transparent 75%, #ccc 75%);
+      background-size: 20px 20px;
+      background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+      cursor: crosshair;
+      display: block;
+    }
+
+    .tools {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 20px 0;
+      justify-content: center;
+    }
+
+    .btn {
+      padding: 12px 25px;
       border: none;
-      border-radius: 5px;
-      background-color: #007bff;
-      color: white;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
     }
 
-    button:disabled {
-      background-color: #aaa;
-      cursor: not-allowed;
+    .btn-primary { background: #007bff; color: white; }
+    .btn-danger { background: #dc3545; color: white; }
+    .btn-success { background: #28a745; color: white; }
+    .btn-purple { background: #6f42c1; color: white; }
+    .btn-warning { background: #ffc107; color: #333; }
+
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+    }
+
+    .brush-controls {
+      background: #f8f9fa;
+      padding: 10px 20px;
+      border-radius: 8px;
+      display: flex;
+      gap: 20px;
+    }
+
+    .status {
+      text-align: center;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      margin-top: 20px;
+      font-weight: 500;
     }
   </style>
 </head>
 <body>
+  <div class="container">
+    <h1>📝 Text Remover Tool</h1>
+    <p>Sirf text erase karo - background transparent ho jayega (checkerboard dikhega)</p>
 
-<h2>Background Removal Tool</h2>
+    <!-- Upload -->
+    <div class="upload-area" id="uploadArea">
+      <div class="upload-icon">📁</div>
+      <h3>Click to Upload Image</h3>
+    </div>
+    <input type="file" id="fileInput" accept="image/*" style="display: none;">
 
-<div id="dropZone">Drag & Drop Image Here or Click</div>
-<input type="file" id="imageInput" style="display:none">
+    <!-- Canvases -->
+    <div class="canvas-container" id="canvasContainer" style="display: none;">
+      <div class="canvas-box">
+        <h3>
+          <span>✏️ Erase Here</span>
+          <span class="badge" style="background: #ffc107; padding: 4px 10px; border-radius: 20px;">Drag to Erase</span>
+        </h3>
+        <canvas id="eraseCanvas"></canvas>
+      </div>
+      <div class="canvas-box">
+        <h3>
+          <span>✨ Result</span>
+          <span id="resultBadge" style="background: #6c757d; color: white; padding: 4px 10px; border-radius: 20px;">Original</span>
+        </h3>
+        <canvas id="resultCanvas"></canvas>
+      </div>
+    </div>
 
-<img id="imagePreview" src="" alt="Preview" style="display:none">
-<br>
-<button id="removeBtn" onclick="removeBg()" disabled>Remove Background</button>
+    <!-- Tools -->
+    <div class="tools" id="tools" style="display: none;">
+      <div class="brush-controls">
+        <span>🖌️ Brush:</span>
+        <input type="range" id="brushSize" min="5" max="50" value="15">
+        <span id="brushSizeValue">15px</span>
+      </div>
+      <button class="btn btn-primary" id="sampleBtn">1️⃣ Sample BG (Optional)</button>
+      <button class="btn btn-danger" id="eraseBtn">2️⃣ Start Erasing</button>
+      <button class="btn btn-purple" id="showResultBtn">3️⃣ Show Result</button>
+      <button class="btn btn-success" id="downloadBtn">⬇️ Download</button>
+      <button class="btn btn-warning" id="resetBtn">↩️ Reset</button>
+    </div>
 
-<br>
-<h3>Result:</h3>
-<img id="result" src="" alt="Result" style="display:none">
+    <!-- Status -->
+    <div class="status" id="status">👆 Upload image</div>
+  </div>
 
-<script>
-const dropZone = document.getElementById('dropZone');
-const imageInput = document.getElementById('imageInput');
-const imagePreview = document.getElementById('imagePreview');
-const resultImage = document.getElementById('result');
-const removeBtn = document.getElementById('removeBtn');
+  <script>
+    // Get elements
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const canvasContainer = document.getElementById('canvasContainer');
+    const tools = document.getElementById('tools');
+    const eraseCanvas = document.getElementById('eraseCanvas');
+    const resultCanvas = document.getElementById('resultCanvas');
+    const resultBadge = document.getElementById('resultBadge');
+    const statusEl = document.getElementById('status');
+    const brushSize = document.getElementById('brushSize');
+    const brushSizeValue = document.getElementById('brushSizeValue');
+    const sampleBtn = document.getElementById('sampleBtn');
+    const eraseBtn = document.getElementById('eraseBtn');
+    const showResultBtn = document.getElementById('showResultBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const resetBtn = document.getElementById('resetBtn');
 
-let selectedFile = null;
+    // Contexts
+    let eraseCtx = eraseCanvas.getContext('2d');
+    let resultCtx = resultCanvas.getContext('2d');
 
-// Click on dropZone opens file input
-dropZone.addEventListener('click', () => imageInput.click());
+    // State
+    let isErasing = false;
+    let isDrawing = false;
+    let imageLoaded = false;
+    let originalImage = null;
+    let lastX = 0, lastY = 0;
 
-// Handle file input change
-imageInput.addEventListener('change', (e) => handleFiles(e.target.files));
-
-// Drag & Drop events
-dropZone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropZone.classList.add('dragover');
-});
-
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropZone.classList.remove('dragover');
-  handleFiles(e.dataTransfer.files);
-});
-
-function handleFiles(files) {
-  if (files.length === 0) return;
-  selectedFile = files[0];
-
-  // Show preview
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    imagePreview.src = e.target.result;
-    imagePreview.style.display = 'block';
-    removeBtn.disabled = false;
-  }
-  reader.readAsDataURL(selectedFile);
-}
-
-// Remove background
-async function removeBg() {
-  if (!selectedFile) return;
-
-  removeBtn.disabled = true;
-  removeBtn.textContent = "Processing...";
-
-  const formData = new FormData();
-  formData.append('image', selectedFile);
-
-  try {
-    const response = await fetch('/api/users/remove-bg', {
-      method: 'POST',
-      body: formData
+    // Update brush size
+    brushSize.addEventListener('input', () => {
+      brushSizeValue.textContent = brushSize.value + 'px';
     });
 
-    if (!response.ok) throw new Error('Background removal failed');
+    // Upload
+    uploadArea.addEventListener('click', () => fileInput.click());
 
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) loadImage(file);
+    });
 
-    resultImage.src = url;
-    resultImage.style.display = 'block';
-    removeBtn.textContent = "Remove Background";
+    // Load image
+    function loadImage(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          originalImage = img;
+          
+          // Set canvas size
+          const maxWidth = 500;
+          const maxHeight = 350;
+          let width = img.width;
+          let height = img.height;
 
-  } catch (err) {
-    alert(err.message);
-    removeBtn.textContent = "Remove Background";
-  } finally {
-    removeBtn.disabled = false;
-  }
-}
-</script>
+          if (width > maxWidth) {
+            height = (maxWidth / width) * height;
+            width = maxWidth;
+          }
+          if (height > maxHeight) {
+            width = (maxHeight / height) * width;
+            height = maxHeight;
+          }
 
+          eraseCanvas.width = width;
+          eraseCanvas.height = height;
+          resultCanvas.width = width;
+          resultCanvas.height = height;
+
+          eraseCtx.drawImage(img, 0, 0, width, height);
+          resultCtx.drawImage(img, 0, 0, width, height);
+
+          canvasContainer.style.display = 'grid';
+          tools.style.display = 'flex';
+          uploadArea.style.display = 'none';
+          
+          imageLoaded = true;
+          statusEl.innerHTML = '✅ Image loaded! Click "Start Erasing" then drag on text';
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Get mouse position
+    function getMousePos(canvas, e) {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      const x = (e.clientX - rect.left) * scaleX;
+      const y = (e.clientY - rect.top) * scaleY;
+      
+      return {
+        x: Math.max(0, Math.min(x, canvas.width - 1)),
+        y: Math.max(0, Math.min(y, canvas.height - 1))
+      };
+    }
+
+    // Erase function - Make TRANSPARENT (not paint with color)
+    function erase(x, y) {
+      if (!isErasing) return;
+      
+      const size = parseInt(brushSize.value);
+      const radius = size / 2;
+      
+      const imageData = eraseCtx.getImageData(0, 0, eraseCanvas.width, eraseCanvas.height);
+      const data = imageData.data;
+      
+      for (let py = Math.max(0, Math.floor(y - radius)); py < Math.min(eraseCanvas.height, Math.ceil(y + radius)); py++) {
+        for (let px = Math.max(0, Math.floor(x - radius)); px < Math.min(eraseCanvas.width, Math.ceil(x + radius)); px++) {
+          const dx = px - x;
+          const dy = py - y;
+          if (Math.sqrt(dx*dx + dy*dy) <= radius) {
+            const idx = (py * eraseCanvas.width + px) * 4;
+            // Make pixel TRANSPARENT (alpha = 0)
+            data[idx + 3] = 0; // Alpha channel = 0 (fully transparent)
+          }
+        }
+      }
+      
+      eraseCtx.putImageData(imageData, 0, 0);
+      resultBadge.textContent = 'Outdated';
+      resultBadge.style.background = '#dc3545';
+    }
+
+    // ========== MOUSE EVENTS FOR ERASE CANVAS ==========
+    eraseCanvas.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      
+      if (e.button !== 0) return; // Left click only
+      
+      if (!isErasing) {
+        statusEl.innerHTML = '⚠️ Pehle "Start Erasing" click karo!';
+        return;
+      }
+      
+      const pos = getMousePos(eraseCanvas, e);
+      isDrawing = true;
+      lastX = pos.x;
+      lastY = pos.y;
+      erase(pos.x, pos.y);
+    });
+
+    eraseCanvas.addEventListener('mousemove', (e) => {
+      e.preventDefault();
+      
+      if (!isDrawing || !isErasing) return;
+      
+      const pos = getMousePos(eraseCanvas, e);
+      
+      // Draw line between last point and current point for smooth erasing
+      const distance = Math.sqrt(Math.pow(pos.x - lastX, 2) + Math.pow(pos.y - lastY, 2));
+      const steps = Math.ceil(distance / 2);
+      
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const x = lastX + (pos.x - lastX) * t;
+        const y = lastY + (pos.y - lastY) * t;
+        erase(x, y);
+      }
+      
+      lastX = pos.x;
+      lastY = pos.y;
+    });
+
+    // Mouse up on document
+    document.addEventListener('mouseup', () => {
+      isDrawing = false;
+    });
+
+    eraseCanvas.addEventListener('mouseleave', () => {
+      isDrawing = false;
+    });
+
+    // ========== BUTTON CLICKS ==========
+    eraseBtn.addEventListener('click', () => {
+      isErasing = !isErasing;
+      eraseBtn.textContent = isErasing ? '✅ Erasing Active' : '✂️ Start Erasing';
+      eraseBtn.style.background = isErasing ? '#28a745' : '#dc3545';
+      
+      if (isErasing) {
+        statusEl.innerHTML = '✏️ Now drag on text to erase it (makes TRANSPARENT)!';
+      } else {
+        statusEl.innerHTML = '⏸️ Eraser paused';
+      }
+    });
+
+    showResultBtn.addEventListener('click', () => {
+      resultCtx.clearRect(0, 0, resultCanvas.width, resultCanvas.height);
+      resultCtx.drawImage(eraseCanvas, 0, 0);
+      resultBadge.textContent = 'Updated';
+      resultBadge.style.background = '#28a745';
+      statusEl.innerHTML = '✅ Result updated! Transparent areas show checkerboard';
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.download = 'text-removed.png';
+      link.href = resultCanvas.toDataURL();
+      link.click();
+    });
+
+    resetBtn.addEventListener('click', () => {
+      if (originalImage) {
+        eraseCtx.clearRect(0, 0, eraseCanvas.width, eraseCanvas.height);
+        resultCtx.clearRect(0, 0, resultCanvas.width, resultCanvas.height);
+        eraseCtx.drawImage(originalImage, 0, 0, eraseCanvas.width, eraseCanvas.height);
+        resultCtx.drawImage(originalImage, 0, 0, resultCanvas.width, resultCanvas.height);
+        
+        isErasing = false;
+        isDrawing = false;
+        
+        eraseBtn.textContent = '✂️ Start Erasing';
+        eraseBtn.style.background = '#dc3545';
+        resultBadge.textContent = 'Original';
+        resultBadge.style.background = '#6c757d';
+        
+        statusEl.innerHTML = '✅ Reset - Click "Start Erasing" to begin';
+      }
+    });
+
+    // Sample BG button is now optional - removed dependency
+    sampleBtn.addEventListener('click', () => {
+      statusEl.innerHTML = 'ℹ️ Background sampling is optional - just drag to erase!';
+    });
+  </script>
 </body>
 </html>
