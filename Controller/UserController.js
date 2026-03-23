@@ -44,6 +44,7 @@ import admin from 'firebase-admin';
 import Chat from '../Models/Chat.js';
 import Notification from '../Models/Notification.js';
 import { exec } from "child_process";
+import WalletConfig from '../Models/WalletConfig.js';
 
 
 dayjs.extend(customParseFormat);
@@ -4843,5 +4844,46 @@ export const removeBackground = async (req, res) => {
   } catch (error) {
     console.error("Server error:", error);
     res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+export const addWalletReward = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const config = await WalletConfig.findOne();
+
+    if (!config) {
+      return res.status(400).json({
+        success: false,
+        message: "Wallet config not set",
+      });
+    }
+
+    user.wallet = (user.wallet || 0) + config.amount;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Wallet updated successfully",
+      addedAmount: config.amount,
+      wallet: user.wallet,
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
   }
 };

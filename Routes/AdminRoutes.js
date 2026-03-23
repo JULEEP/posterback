@@ -46,6 +46,22 @@ import {
     updateLogoCategory,
     deleteLogoCategory,
     getAllLogosForAdmin,
+    createStickerCategory,
+    getAllStickerCategories,
+    editStickerCategory,
+    deleteStickerCategory,
+    createSticker,
+    getAllStickers,
+    updateSticker,
+    deleteSticker,
+    getStickersByCategory,
+    getSingleSticker,
+    setWalletAmount,
+    getWalletAmount,
+    deleteWalletConfig,
+    setAmount,
+    getAllAmounts,
+    deleteAmount,
 } from "../Controller/AdminController.js";
 import { getAllCategoriesForAdmin } from "../Controller/CategoryController.js";
 
@@ -105,10 +121,29 @@ router.put('/updateaudio/:audioId', updateAudio);
 router.delete('/deleteaudio/:audioId', deleteAudio);
 
 
+router.post("/createsticker-category", createStickerCategory);
+router.get("/allsticker-category", getAllStickerCategories);
+router.put("/updatesticker-category/:id", editStickerCategory);
+router.delete("/deletesticker-category/:id", deleteStickerCategory);
+
+
+router.post("/createsticker", createSticker);
+router.get("/allsticker", getAllStickers);
+router.put("/updatesticker/:id", updateSticker);
+router.delete("/deletesticker/:id", deleteSticker);
+router.get("/allstickerbycat", getStickersByCategory);
+router.get("/singlesticker/:stickerId", getSingleSticker);
+
+
+router.post("/setwallet", setWalletAmount);
+router.get("/getwallet", getWalletAmount);
+router.delete("/deletewallet", deleteWalletConfig);
 
 
 
-
+router.post("/setamount", setAmount);
+router.get("/allamount", getAllAmounts);
+router.delete("/amount/:id", deleteAmount);
 
 
 export default router;

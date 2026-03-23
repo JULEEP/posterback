@@ -56,7 +56,8 @@ import {
      getNotificationsByUserId,
      deleteNotificationsByIds,
      googleLogin,
-     removeBackground
+     removeBackground,
+     addWalletReward
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -138,6 +139,8 @@ router.delete("/deletenotifications/:userId", deleteNotificationsByIds);
 
 router.post('/api/auth/google', googleLogin);
 router.post("/remove-bg", removeBackground);
+router.post("/addwalletrewaqrd/:userId", addWalletReward);
+
 
 
 

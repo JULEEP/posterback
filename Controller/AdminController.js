@@ -17,6 +17,10 @@ import LogoCategory from "../Models/LogoCategory.js";
 import Reel from "../Models/Reel.js";
 import Audio from "../Models/Audio.js";
 import Notification from "../Models/Notification.js";
+import StickerCategory from "../Models/StickerCategory.js";
+import Sticker from "../Models/Sticker.js";
+import WalletConfig from "../Models/WalletConfig.js";
+import AmountConfig from "../Models/AmountConfig.js";
 
 
 
@@ -1537,5 +1541,533 @@ export const deleteAudio = async (req, res) => {
   } catch (error) {
     console.error("❌ Delete audio error:", error);
     res.status(500).json({ message: error.message });
+  }
+};
+
+
+
+export const createStickerCategory = async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    if (!name) {
+      return res.status(400).json({ message: "Category name is required." });
+    }
+
+    if (!req.files || !req.files.image) {
+      return res.status(400).json({ message: "Category image is required." });
+    }
+
+    const file = req.files.image;
+
+    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      folder: "sticker-category-images",
+    });
+
+    const newCategory = await StickerCategory.create({
+      name,
+      image: result.secure_url,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Sticker category created successfully",
+      category: newCategory,
+    });
+
+  } catch (error) {
+    console.error("Error creating sticker category:", error);
+
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Category already exists." });
+    }
+
+    return res.status(500).json({
+      message: "Error creating sticker category",
+      error: error.message,
+    });
+  }
+};
+
+
+export const getAllStickerCategories = async (req, res) => {
+  try {
+    const categories = await StickerCategory.find()
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const updatedCategories = await Promise.all(
+      categories.map(async (cat) => {
+
+        // 🔥 total stickers count
+        const count = await Sticker.countDocuments({
+          stickerCategoryId: cat._id,
+        });
+
+        // 🔥 first 4 stickers
+        const stickers = await Sticker.find({
+          stickerCategoryId: cat._id,
+        })
+          .select("image")
+          .limit(4)
+          .lean();
+
+        return {
+          ...cat,
+          stickerCount: count,
+          stickersPreview: stickers.map(s => s.image), // only image array
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: updatedCategories.length,
+      categories: updatedCategories,
+    });
+
+  } catch (error) {
+    console.error("Error fetching sticker categories:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching sticker categories",
+      error: error.message,
+    });
+  }
+};
+
+export const editStickerCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name } = req.body;
+
+    const category = await StickerCategory.findById(id);
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Sticker category not found",
+      });
+    }
+
+    // update name if provided
+    if (name) {
+      category.name = name;
+    }
+
+    // update image if provided
+    if (req.files && req.files.image) {
+      const file = req.files.image;
+
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "sticker-category-images",
+      });
+
+      category.image = result.secure_url;
+    }
+
+    const updatedCategory = await category.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Sticker category updated successfully",
+      category: updatedCategory,
+    });
+
+  } catch (error) {
+    console.error("Error updating sticker category:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error updating sticker category",
+      error: error.message,
+    });
+  }
+};
+
+
+export const deleteStickerCategory = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const category = await StickerCategory.findById(id);
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Sticker category not found",
+      });
+    }
+
+    await StickerCategory.findByIdAndDelete(id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Sticker category deleted successfully",
+    });
+
+  } catch (error) {
+    console.error("Error deleting sticker category:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Error deleting sticker category",
+      error: error.message,
+    });
+  }
+};
+
+
+export const createSticker = async (req, res) => {
+  try {
+    const { stickerCategoryId } = req.body;
+
+    if (!stickerCategoryId) {
+      return res.status(400).json({ message: "stickerCategoryId is required" });
+    }
+
+    if (!req.files || !req.files.image) {
+      return res.status(400).json({ message: "Sticker image is required" });
+    }
+
+    const file = req.files.image;
+
+    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      folder: "stickers",
+    });
+
+    const newSticker = new Sticker({
+      stickerCategoryId,
+      image: result.secure_url,
+    });
+
+    const saved = await newSticker.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Sticker created successfully",
+      sticker: saved,
+    });
+
+  } catch (error) {
+    console.error("Create Sticker Error:", error);
+    res.status(500).json({ message: "Error creating sticker", error: error.message });
+  }
+};
+
+// ==========================
+// GET ALL STICKERS
+// ==========================
+export const getAllStickers = async (req, res) => {
+  try {
+    const stickers = await Sticker.find()
+      .populate("stickerCategoryId", "name image")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: stickers.length,
+      stickers,
+    });
+
+  } catch (error) {
+    console.error("Get Stickers Error:", error);
+    res.status(500).json({ message: "Error fetching stickers", error: error.message });
+  }
+};
+
+// ==========================
+// UPDATE STICKER
+// ==========================
+export const updateSticker = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { stickerCategoryId } = req.body;
+
+    const sticker = await Sticker.findById(id);
+    if (!sticker) {
+      return res.status(404).json({ message: "Sticker not found" });
+    }
+
+    // Update category if provided
+    if (stickerCategoryId) {
+      sticker.stickerCategoryId = stickerCategoryId;
+    }
+
+    // Update image if new one uploaded
+    if (req.files && req.files.image) {
+      const file = req.files.image;
+
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "stickers",
+      });
+
+      sticker.image = result.secure_url;
+    }
+
+    const updated = await sticker.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Sticker updated successfully",
+      sticker: updated,
+    });
+
+  } catch (error) {
+    console.error("Update Sticker Error:", error);
+    res.status(500).json({ message: "Error updating sticker", error: error.message });
+  }
+};
+
+// ==========================
+// DELETE STICKER
+// ==========================
+export const deleteSticker = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const sticker = await Sticker.findById(id);
+    if (!sticker) {
+      return res.status(404).json({ message: "Sticker not found" });
+    }
+
+    await Sticker.findByIdAndDelete(id);
+
+    res.status(200).json({
+      success: true,
+      message: "Sticker deleted successfully",
+    });
+
+  } catch (error) {
+    console.error("Delete Sticker Error:", error);
+    res.status(500).json({ message: "Error deleting sticker", error: error.message });
+  }
+};
+
+
+
+export const getStickersByCategory = async (req, res) => {
+  try {
+    const { stickerCategoryId } = req.query;
+
+    if (!stickerCategoryId) {
+      return res.status(400).json({
+        success: false,
+        message: "stickerCategoryId is required in query",
+      });
+    }
+
+    const stickers = await Sticker.find({ stickerCategoryId })
+      .populate("stickerCategoryId", "name")
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: stickers.length,
+      stickers,
+    });
+
+  } catch (error) {
+    console.error("Get Stickers By Category Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching stickers",
+      error: error.message,
+    });
+  }
+};
+
+
+export const getSingleSticker = async (req, res) => {
+  try {
+    const { stickerId } = req.params;
+
+    const sticker = await Sticker.findById(stickerId)
+      .populate("stickerCategoryId", "name");
+
+    if (!sticker) {
+      return res.status(404).json({
+        success: false,
+        message: "Sticker not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      sticker,
+    });
+
+  } catch (error) {
+    console.error("Get Single Sticker Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching sticker",
+      error: error.message,
+    });
+  }
+};
+
+
+export const setWalletAmount = async (req, res) => {
+  try {
+    const { amount } = req.body;
+
+    if (amount === undefined || amount === null) {
+      return res.status(400).json({
+        success: false,
+        message: "Amount is required",
+      });
+    }
+
+    let config = await WalletConfig.findOne();
+
+    if (!config) {
+      config = await WalletConfig.create({ amount });
+    } else {
+      config.amount = amount;
+      await config.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Wallet amount updated successfully",
+      config,
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error updating wallet amount",
+      error: error.message,
+    });
+  }
+};
+
+
+export const getWalletAmount = async (req, res) => {
+  try {
+    const config = await WalletConfig.findOne();
+
+    res.status(200).json({
+      success: true,
+      amount: config ? config.amount : 0,
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error fetching wallet amount",
+      error: error.message,
+    });
+  }
+};
+
+
+export const deleteWalletConfig = async (req, res) => {
+  try {
+    await WalletConfig.deleteMany();
+
+    res.status(200).json({
+      success: true,
+      message: "Wallet config deleted",
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Error deleting wallet config",
+      error: error.message,
+    });
+  }
+};
+
+
+
+export const setAmount = async (req, res) => {
+  try {
+    const { name, amount } = req.body;
+
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        message: "Name is required",
+      });
+    }
+
+    let data = await AmountConfig.findOne({ name });
+
+    if (!data) {
+      data = await AmountConfig.create({
+        name,
+        amount,
+      });
+    } else {
+      data.amount = amount ?? data.amount;
+      await data.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Amount updated successfully",
+      data,
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error setting amount",
+      error: error.message,
+    });
+  }
+};
+
+
+export const getAllAmounts = async (req, res) => {
+  try {
+    const data = await AmountConfig.find().sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      data,
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching amounts",
+      error: error.message,
+    });
+  }
+};
+
+
+
+export const deleteAmount = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const data = await AmountConfig.findById(id);
+
+    if (!data) {
+      return res.status(404).json({
+        success: false,
+        message: "Amount config not found",
+      });
+    }
+
+    await AmountConfig.findByIdAndDelete(id);
+
+    return res.status(200).json({
+      success: true,
+      message: "Amount deleted successfully",
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Error deleting amount",
+      error: error.message,
+    });
   }
 };

@@ -178,7 +178,8 @@ export const updatePoster = async (req, res) => {
 
 export const editPoster = async (req, res) => {
   try {
-    const { posterId } = req.params;  // Poster ID from URL parameter
+    const { posterId } = req.params;
+
     const {
       name,
       categoryName,
@@ -187,37 +188,32 @@ export const editPoster = async (req, res) => {
       size,
       festivalDate,
       inStock,
-      tags
+      tags,
+      posterlang   // ✅ NEW FIELD ADDED ONLY
     } = req.body;
 
-    // Find the existing poster by ID
     const poster = await Poster.findById(posterId);
 
     if (!poster) {
       return res.status(404).json({ message: 'Poster not found' });
     }
 
-    // Handle new images if any were uploaded
-    let images = poster.images; // Keep existing images by default
+    let images = poster.images;
 
-    // If new images are uploaded, add them to the existing ones
     if (req.files && req.files.images) {
       const files = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
       const newImages = [];
 
-      // Upload new images to Cloudinary
       for (const file of files) {
         const result = await cloudinary.uploader.upload(file.tempFilePath, {
-          folder: "poster", // Specify a folder in Cloudinary
+          folder: "poster",
         });
-        newImages.push(result.secure_url);  // Store the secure URL of each image
+        newImages.push(result.secure_url);
       }
 
-      // Append the new images to the existing ones
       images = [...images, ...newImages];
     }
 
-    // Conditionally update the fields based on what is provided in the request body
     if (name) poster.name = name;
     if (categoryName) poster.categoryName = categoryName;
     if (price) poster.price = price;
@@ -225,18 +221,19 @@ export const editPoster = async (req, res) => {
     if (size) poster.size = size;
     if (festivalDate) poster.festivalDate = festivalDate;
     if (inStock !== undefined) poster.inStock = inStock;
-    if (tags) poster.tags = tags.split(",");  // Convert tags string to an array
+    if (tags) poster.tags = tags.split(",");
 
-    // Always update the images array, even if the other fields were not provided
+    if (posterlang) poster.posterlang = posterlang; // ✅ NEW FIELD UPDATED
+
     poster.images = images;
 
-    // Save the updated poster
     const updatedPoster = await poster.save();
 
     return res.status(200).json({
       message: "Poster updated successfully",
       poster: updatedPoster,
     });
+
   } catch (error) {
     console.error("❌ Error editing poster:", error);
     res.status(500).json({ message: "Server error", error: error.message });
@@ -322,10 +319,10 @@ export const getAllPosters = async (req, res) => {
       translationMap = await translateToHindiBulk(textsToTranslate);
     }
 
-    posters = posters.map(poster => {
-      const obj = poster.toObject();
-      const posterImageUrl = obj.posterImage?.url || null;
+    posters = posters.map(p => {
+      const obj = p.toObject();
 
+      // translation
       if (lang === "hi") {
         if (obj.categoryName)
           obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
@@ -334,21 +331,34 @@ export const getAllPosters = async (req, res) => {
           obj.name = translationMap[obj.name] || obj.name;
       }
 
+      const designData = obj.designData || {};
+
+      const cleanDesignData = {
+        bgImage: designData.bgImage || null,
+        overlayImages: designData.overlayImages || []
+        // ❌ removed overlayImageFilters
+      };
+
+      // remove unwanted root field
+      delete obj.overlaySettings;
+
       return {
         ...obj,
-        images: posterImageUrl ? [posterImageUrl] : [],
+        designData: cleanDesignData,
+        images: obj.posterImage?.url ? [obj.posterImage.url] : []
       };
     });
 
-    // ✅ SAME RESPONSE
-    res.status(200).json(posters);
+    return res.status(200).json(posters);
 
   } catch (error) {
-    console.error("Error fetching posters:", error);
-    res.status(500).json({ message: "Error fetching posters", error });
+    console.error(error);
+    return res.status(500).json({
+      message: "Error fetching posters",
+      error: error.message
+    });
   }
 };
-
 
 
 export const getAllPostersForAdmin = async (req, res) => {
@@ -479,28 +489,36 @@ export const getPostersByFestivalDates = async (req, res) => {
       return res.status(400).json({ message: "Festival date is required" });
     }
 
-    let posters = await Poster.find({ festivalDate }).sort({ createdAt: -1 });
+    let posters = await Poster.find({ festivalDate })
+      .sort({ createdAt: -1 })
+      .lean(); // ⚡ faster
 
-    if (posters.length === 0) {
+    if (!posters.length) {
       return res.status(404).json({ message: "No posters found for this festival date" });
     }
 
-    // Map posters to add images array from posterImage.url
-    posters = posters.map(poster => {
-      const posterImageUrl = poster.posterImage?.url || null;
+    posters = posters.map(obj => {
+      const designData = obj.designData || {};
 
       return {
-        ...poster.toObject(),
-        images: posterImageUrl ? [posterImageUrl] : [],
+        ...obj,
+        designData: {
+          bgImage: designData.bgImage || null,
+          overlayImages: designData.overlayImages || []
+        },
+        images: obj.posterImage?.url ? [obj.posterImage.url] : []
       };
     });
 
     res.status(200).json(posters);
+
   } catch (error) {
-    res.status(500).json({ message: "Error fetching posters", error });
+    res.status(500).json({
+      message: "Error fetching posters",
+      error: error.message
+    });
   }
 };
-
 
 
 export const Postercreate = async (req, res) => {
@@ -868,7 +886,8 @@ export const canvasCreatePoster = async (req, res) => {
       email, 
       mobile, 
       title,
-      designData
+      designData,
+      posterlang
     } = req.body;
 
     if (!req.files || !req.files.posterImage) {
@@ -881,24 +900,13 @@ export const canvasCreatePoster = async (req, res) => {
     // Parse designData if it's a JSON string
     const designDataParsed = typeof designData === 'string' ? JSON.parse(designData) : designData;
 
-    // Upload final poster image with watermark in the center
+    // Upload final poster image WITHOUT watermark
     const posterFile = req.files.posterImage;
     const posterUpload = await cloudinary.uploader.upload(posterFile.tempFilePath, {
       folder: 'posters/final',
       quality: 'auto:good',
-      format: 'jpg',
-      transformation: [
-        {
-          overlay: {
-            font_family: "Arial",
-            font_size: 30,
-            text: "Your Watermark"
-          },
-          gravity: "center",
-          opacity: 50,
-          color: "#FFFFFF"
-        }
-      ]
+      format: 'jpg'
+      // Removed watermark transformation
     });
 
     // Upload bgImage if provided
@@ -941,6 +949,7 @@ export const canvasCreatePoster = async (req, res) => {
       email: email || undefined,
       mobile: mobile || undefined,
       title: title || undefined,
+      posterlang,
       posterImage: {
         url: posterUpload.secure_url,
         publicId: posterUpload.public_id
@@ -975,6 +984,7 @@ export const canvasCreatePoster = async (req, res) => {
         mobile: newPoster.mobile,
         title: newPoster.title,
         posterImage: newPoster.posterImage.url,
+        posterlang: newPoster.posterlang,
         createdAt: newPoster.createdAt
       }
     });
@@ -988,7 +998,6 @@ export const canvasCreatePoster = async (req, res) => {
     });
   }
 };
-
 
 
 
@@ -1170,51 +1179,69 @@ export const getWeeklyPosters = async (req, res) => {
     const { userId } = req.params;
     let lang = "en";
 
-    // 🔹 Get user language if provided
+    // 🔹 user language
     if (userId) {
-      const user = await User.findById(userId).select("language");
+      const user = await User.findById(userId).select("language").lean();
       if (user) lang = user.language || "en";
     }
 
-    // 🔹 Fetch all posters
-    const posters = await Poster.find().sort({ categoryName: 1 });
+    // 🔹 fetch posters (lean = fast)
+    const posters = await Poster.find()
+      .select("name categoryName posterImage designData description posterlang size festivalDate inStock tags title createdAt updatedAt")
+      .sort({ categoryName: 1 })
+      .lean();
+
     if (!posters.length) return res.status(200).json({});
 
-    // 🔹 Determine today
-    const today = moment().format("dddd"); // e.g., "Monday"
+    // 🔹 today
+    const today = moment().format("dddd");
     const todayLower = today.toLowerCase();
 
     let translationMap = {};
+
+    // 🔹 translation (same logic)
     if (lang === "hi") {
-      const textsToTranslate = [];
+      const uniqueTexts = new Set();
+
       posters.forEach(p => {
-        if (p.categoryName) textsToTranslate.push(p.categoryName);
-        if (p.name && p.name.trim() !== "") textsToTranslate.push(p.name);
+        if (p.categoryName) uniqueTexts.add(p.categoryName);
+        if (p.name) uniqueTexts.add(p.name);
       });
-      if (textsToTranslate.length > 0) {
-        translationMap = await translateToHindiBulk([...new Set(textsToTranslate)]);
+
+      const textsArray = Array.from(uniqueTexts);
+
+      if (textsArray.length > 0) {
+        translationMap = await translateToHindiBulk(textsArray);
       }
     }
 
-    // 🔹 Filter posters for today only
+    // 🔹 filter + SAME RESPONSE STRUCTURE
     const todayPosters = posters
       .filter(p => p.categoryName && p.categoryName.toLowerCase().trim() === todayLower)
-      .map(poster => {
-        const obj = poster.toObject();
+      .map(obj => {
 
-        // Apply translation if needed
+        // translation
         if (lang === "hi") {
-          if (obj.categoryName) obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
-          if (obj.name && obj.name.trim() !== "") obj.name = translationMap[obj.name] || obj.name;
+          if (obj.categoryName)
+            obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
+
+          if (obj.name)
+            obj.name = translationMap[obj.name] || obj.name;
         }
+
+        const designData = obj.designData || {};
 
         return {
           ...obj,
+          designData: {
+            bgImage: designData.bgImage || null,
+            overlayImages: designData.overlayImages || []
+          },
           images: obj.posterImage?.url ? [obj.posterImage.url] : []
         };
       });
 
-    // 🔹 Prepare response structure: { "Monday": [...] } or whatever today is
+    // 🔹 final response (same format)
     const response = {};
     if (todayPosters.length) {
       response[today] = todayPosters;
@@ -1224,7 +1251,10 @@ export const getWeeklyPosters = async (req, res) => {
 
   } catch (error) {
     console.error("Error fetching today's posters:", error);
-    res.status(500).json({ message: "Error fetching today's posters", error });
+    res.status(500).json({
+      message: "Error fetching today's posters",
+      error: error.message
+    });
   }
 };
 

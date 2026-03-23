@@ -22,6 +22,9 @@ const posterSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+    posterlang: {
+    type: String,
+  },
   size: {
     type: String,
     enum: ['A3', 'A4', 'A5', 'Custom'],
