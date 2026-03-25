@@ -45,6 +45,7 @@ import Chat from '../Models/Chat.js';
 import Notification from '../Models/Notification.js';
 import { exec } from "child_process";
 import WalletConfig from '../Models/WalletConfig.js';
+import BusinessCard from '../Models/BusinessCard.js';
 
 
 dayjs.extend(customParseFormat);
@@ -4884,6 +4885,161 @@ export const addWalletReward = async (req, res) => {
       success: false,
       message: "Server error",
       error: error.message,
+    });
+  }
+};
+
+
+// Add Business Card to User
+export const addUserBusinessCard = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const businessCardData = req.body;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required"
+      });
+    }
+
+    if (!businessCardData || Object.keys(businessCardData).length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Business card data is required"
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Create business card object with only basic details
+    const newBusinessCard = {
+      name: businessCardData.name || '',
+      title: businessCardData.title || '',
+      company: businessCardData.company || '',
+      email: businessCardData.email || '',
+      phone: businessCardData.phone || '',
+      address: businessCardData.address || '',
+      website: businessCardData.website || '',
+      logo: businessCardData.logo || '',
+      socialLinks: businessCardData.socialLinks || [], // Social links array
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      cardId: Date.now().toString()
+    };
+
+    user.userBusinessCards.push(newBusinessCard);
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Business card added successfully",
+      data: newBusinessCard,
+      totalCards: user.userBusinessCards.length
+    });
+
+  } catch (error) {
+    console.error("Error adding business card:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error adding business card",
+      error: error.message
+    });
+  }
+};
+
+
+// ✅ Get all Business Cards - TemplateImage pe user data map karke dikhao
+export const getUserBusinessCards = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required"
+      });
+    }
+
+    // 1. User se userBusinessCards array fetch karo (user ka personal data)
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // 2. BusinessCard schema se saare cards fetch karo (templates ke saath)
+    const templateCards = await BusinessCard.find().sort({ createdAt: -1 });
+
+    // 3. User ke data ko templateCard ke structure mein map karo
+    const userMappedCards = (user.userBusinessCards || []).map(userCard => {
+      // Find matching template or use first template
+      const template = templateCards[0] || {};
+      
+      return {
+        // Template se structure le lo
+        _id: userCard.cardId || new mongoose.Types.ObjectId(),
+        textStyles: template.textStyles || {},
+        logoSettings: template.logoSettings || {},
+        design: template.design || {},
+        useTemplate: template.useTemplate || false,
+        templateImage: template.templateImage || '',
+        qrCode: template.qrCode || '',
+        createdAt: userCard.createdAt,
+        updatedAt: userCard.updatedAt,
+        
+        // User se actual data
+        name: userCard.name || '',
+        title: userCard.title || '',
+        company: userCard.company || '',
+        email: userCard.email || '',
+        phone: userCard.phone || '',
+        address: userCard.address || '',
+        website: userCard.website || '',
+        logo: userCard.logo || '',
+        previewImage: userCard.previewImage || '',
+        
+        // Social links user ke
+        socialLinks: userCard.socialLinks || [],
+        
+        source: 'user_profile'
+      };
+    });
+
+    // 4. Template cards ko original format mein rakho
+    const originalTemplateCards = templateCards.map(card => ({
+      ...card.toObject(),
+      source: 'business_card_schema'
+    }));
+
+    // 5. Dono ko combine karo
+    const combinedCards = [...userMappedCards, ...originalTemplateCards];
+
+    res.status(200).json({
+      success: true,
+      counts: {
+        fromUserProfile: userMappedCards.length,
+        fromBusinessCardSchema: originalTemplateCards.length,
+        total: combinedCards.length
+      },
+      data: combinedCards
+    });
+
+  } catch (error) {
+    console.error("Error fetching business cards:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching business cards",
+      error: error.message
     });
   }
 };

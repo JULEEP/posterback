@@ -101,6 +101,8 @@ referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }
 
     },
   ],
+
+    userBusinessCards: { type: Array, default: [] },
   free7DayTrial: {
   type: Boolean,
   default: true

@@ -453,13 +453,10 @@ export const getDashboardData = async (req, res) => {
 
 export const createLogo = async (req, res) => {
   try {
-    const { name, description, price, logoCategoryId } = req.body;
+    const { name, logoCategoryId, placeholders, previewImageData } = req.body;
 
-    // validations
     if (!logoCategoryId) {
-      return res
-        .status(400)
-        .json({ message: "Logo category is required." });
+      return res.status(400).json({ message: "Logo category is required." });
     }
 
     if (!req.files || !req.files.image) {
@@ -468,24 +465,73 @@ export const createLogo = async (req, res) => {
 
     const file = req.files.image;
 
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+    // 1. Upload ORIGINAL image to Cloudinary
+    const originalResult = await cloudinary.uploader.upload(file.tempFilePath, {
       folder: "logo-images",
     });
+    const originalImage = originalResult.secure_url;
 
-    const image = result.secure_url;
+    // 2. Upload PREVIEW image if provided
+    let previewImage = '';
+    if (previewImageData) {
+      try {
+        // Remove data URL prefix if present
+        const base64Data = previewImageData.replace(/^data:image\/\w+;base64,/, '');
+        const buffer = Buffer.from(base64Data, 'base64');
+        
+        const previewResult = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            {
+              folder: "logo-images/preview",
+              format: 'png'
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          uploadStream.end(buffer);
+        });
+        
+        previewImage = previewResult.secure_url;
+      } catch (error) {
+        console.error('Error uploading preview image:', error);
+        previewImage = originalImage; // Fallback to original if error
+      }
+    }
+
+    // Parse placeholders
+    let parsedPlaceholders = [];
+    
+    if (placeholders) {
+      try {
+        if (typeof placeholders === 'string') {
+          parsedPlaceholders = JSON.parse(placeholders);
+        } else if (Array.isArray(placeholders)) {
+          parsedPlaceholders = placeholders;
+        }
+      } catch (error) {
+        console.error('Error parsing placeholders:', error);
+        parsedPlaceholders = [];
+      }
+    }
 
     const newLogo = new Logo({
       name,
-      description,
-      price,
-      image,
+      image: originalImage,        // Original image
+      previewImage: previewImage,  // Preview image with overlays
       logoCategoryId,
+      placeholders: parsedPlaceholders,
     });
 
     const savedLogo = await newLogo.save();
 
-    res.status(201).json(savedLogo);
+    res.status(201).json({
+      success: true,
+      message: "Logo created successfully",
+      data: savedLogo
+    });
+
   } catch (error) {
     console.error("Error uploading logo:", error);
     res.status(500).json({
@@ -494,7 +540,6 @@ export const createLogo = async (req, res) => {
     });
   }
 };
-
 
 
 // ✅ Get all logos with language support
@@ -662,60 +707,7 @@ export const deleteLogo = async (req, res) => {
 
 
 
-export const createBusinessCard = async (req, res) => {
-  try {
-    const {
-      name,
-      category,
-      price,
-      offerPrice,
-      description,
-      size,
-      inStock,
-      tags
-    } = req.body;
 
-    // Check if images are uploaded
-    if (!req.files || !req.files.images) {
-      return res.status(400).json({ message: "No images uploaded" });
-    }
-
-    const files = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
-    const uploadedImages = [];
-
-    // Upload all images to Cloudinary
-    for (const file of files) {
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "business-card-images"
-      });
-
-      uploadedImages.push(result.secure_url);
-    }
-
-    const newBusinessPoster = new BusinessCard({
-      name,
-      category,
-      price,
-      offerPrice,
-      images: uploadedImages,
-      description,
-      size,
-      inStock,
-      tags: tags ? tags.split(',') : []
-    });
-
-    const savedBusinessPoster = await newBusinessPoster.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Business card created successfully',
-      poster: savedBusinessPoster
-    });
-  } catch (error) {
-    console.error("Error creating business card:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
-  }
-};
 // ✅ Get all Business Cards
 export const getAllBusinessCards = async (req, res) => {
   try {
@@ -2068,6 +2060,128 @@ export const deleteAmount = async (req, res) => {
       success: false,
       message: "Error deleting amount",
       error: error.message,
+    });
+  }
+};
+
+
+// Create Business Card
+export const createBusinessCard = async (req, res) => {
+  try {
+    const {
+      name,
+      title,
+      company,
+      email,
+      phone,
+      address,
+      website,
+      socialLinks,
+      textStyles,
+      logoSettings,
+      design,
+      useTemplate
+    } = req.body;
+
+    // Validation
+    if (!name || !title) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Name and title are required" 
+      });
+    }
+
+    // Parse JSON strings if they come as strings
+    const parseIfString = (data) => {
+      if (typeof data === 'string') {
+        try {
+          return JSON.parse(data);
+        } catch (e) {
+          return data;
+        }
+      }
+      return data;
+    };
+
+    const parsedSocialLinks = parseIfString(socialLinks);
+    const parsedTextStyles = parseIfString(textStyles);
+    const parsedLogoSettings = parseIfString(logoSettings);
+    const parsedDesign = parseIfString(design);
+
+    // Upload logo if present
+    let logoUrl = '';
+    if (req.files && req.files.logo) {
+      const logoFile = req.files.logo;
+      const logoResult = await cloudinary.uploader.upload(logoFile.tempFilePath, {
+        folder: "business-cards/logos",
+      });
+      logoUrl = logoResult.secure_url;
+    }
+
+    // Upload QR code if present
+    let qrCodeUrl = '';
+    if (req.files && req.files.qrCode) {
+      const qrFile = req.files.qrCode;
+      const qrResult = await cloudinary.uploader.upload(qrFile.tempFilePath, {
+        folder: "business-cards/qrcodes",
+      });
+      qrCodeUrl = qrResult.secure_url;
+    }
+
+    // Upload TEMPLATE image (without any overlay - just background)
+    let templateUrl = '';
+    if (req.files && req.files.templateImage) {
+      const templateFile = req.files.templateImage;
+      const templateResult = await cloudinary.uploader.upload(templateFile.tempFilePath, {
+        folder: "business-cards/templates",
+      });
+      templateUrl = templateResult.secure_url;
+    }
+
+    // Upload PREVIEW image (with all overlays - final card)
+    let previewUrl = '';
+    if (req.files && req.files.previewImage) {
+      const previewFile = req.files.previewImage;
+      const previewResult = await cloudinary.uploader.upload(previewFile.tempFilePath, {
+        folder: "business-cards/previews",
+      });
+      previewUrl = previewResult.secure_url;
+    }
+
+    // Create business card
+    const businessCard = new BusinessCard({
+      name,
+      title,
+      company: company || '',
+      email: email || '',
+      phone: phone || '',
+      address: address || '',
+      website: website || '',
+      logo: logoUrl,
+      qrCode: qrCodeUrl,
+      templateImage: templateUrl,    // 👈 Background template without overlay
+      previewImage: previewUrl,       // 👈 Final card with all overlays
+      logoSettings: parsedLogoSettings,
+      textStyles: parsedTextStyles,
+      socialLinks: parsedSocialLinks || [],
+      design: parsedDesign,
+      useTemplate: useTemplate === 'true'
+    });
+
+    const savedCard = await businessCard.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Business card created successfully",
+      data: savedCard
+    });
+
+  } catch (error) {
+    console.error("Error creating business card:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error creating business card",
+      error: error.message
     });
   }
 };

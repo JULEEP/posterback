@@ -2,22 +2,31 @@ import mongoose from 'mongoose';
 
 const logoSchema = new mongoose.Schema({
   name: { 
-    type: String, 
-  },
-  description: { 
-    type: String, 
-  },
-  price: { 
-    type: Number, 
+    type: String,
+    trim: true
   },
   image: { 
-    type: String, 
-  }, // Store image URL
+    type: String,
+  },
+    previewImage: {  // 👈 NEW FIELD
+    type: String,
+    default: ''
+  },
   logoCategoryId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "LogoCategory",
+  },
+  placeholders: {
+    type: [mongoose.Schema.Types.Mixed], // 👈 FIX: Using Mixed type for flexibility
+    default: []
   }
-}, { timestamps: true });
+}, { 
+  timestamps: true 
+});
+
+// Add index for better query performance
+logoSchema.index({ logoCategoryId: 1 });
+logoSchema.index({ createdAt: -1 });
 
 const Logo = mongoose.model('Logo', logoSchema);
 

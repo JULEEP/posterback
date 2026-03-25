@@ -1,6 +1,7 @@
 import Category from "../Models/Category.js";
 import cloudinary from "../config/cloudinary.js";
 import User from "../Models/User.js";
+import LogoCategory from "../Models/LogoCategory.js";
 
 
 export const createCategory = async (req, res) => {
@@ -112,24 +113,23 @@ async function translateToHindi(text) {
 // 📦 Get all categories (Simple version)
 export const getAllCategoriesForAdmin = async (req, res) => {
   try {
-    const categories = await Category.find().sort({ createdAt: -1 });
+    const categories = await LogoCategory.find().sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
-      message: "All categories retrieved",
+      message: "All logo categories retrieved",
       categories: categories,
       count: categories.length
     });
 
   } catch (error) {
-    console.error("Error getting categories:", error);
+    console.error("Error getting logo categories:", error);
     res.status(500).json({
       success: false,
       message: "Server error"
     });
   }
 };
-
 // 🔍 Get single category by ID
 export const getSingleCategory = async (req, res) => {
   try {
