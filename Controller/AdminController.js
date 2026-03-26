@@ -21,6 +21,7 @@ import StickerCategory from "../Models/StickerCategory.js";
 import Sticker from "../Models/Sticker.js";
 import WalletConfig from "../Models/WalletConfig.js";
 import AmountConfig from "../Models/AmountConfig.js";
+import Celebration from "../Models/Celebration.js";
 
 
 
@@ -2181,6 +2182,230 @@ export const createBusinessCard = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error creating business card",
+      error: error.message
+    });
+  }
+};
+
+
+
+// celebrationController.js - Fixed
+export const createCelebration = async (req, res) => {
+  try {
+    let videoUrl = "";
+
+    if (req.files && req.files.video) {
+      const file = req.files.video;
+
+      // ✅ detect file type
+      const isGif = file.mimetype === "image/gif";
+
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "celebrations",
+        resource_type: isGif ? "image" : "video",
+      });
+
+      videoUrl = result.secure_url;
+    }
+
+    const {
+      enabled,
+      duration_seconds,
+      loop,
+      gradient_colors,
+      section_bg_color,
+      primary_text_color,
+      secondary_text_color,
+      accent_color,
+    } = req.body;
+
+    // ✅ Parse gradient_colors if it's a string
+    let parsedGradientColors = gradient_colors;
+    if (typeof gradient_colors === 'string') {
+      try {
+        parsedGradientColors = JSON.parse(gradient_colors);
+      } catch(e) {
+        parsedGradientColors = ['#FF6B6B', '#4ECDC4'];
+      }
+    }
+
+    const celebration = await Celebration.create({
+      enabled,
+      video_url: videoUrl,
+      duration_seconds,
+      loop,
+      gradient_colors: parsedGradientColors, // ✅ Store as array, not string
+      section_bg_color,
+      primary_text_color,
+      secondary_text_color,
+      accent_color,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Celebration created successfully",
+      data: celebration,
+    });
+
+  } catch (error) {
+    console.error("Create Celebration Error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// ✅ GET ACTIVE (your API)
+export const getCelebration = async (req, res) => {
+  try {
+    const celebration = await Celebration.findOne();
+
+    if (!celebration) {
+      return res.status(200).json({
+        enabled: false,
+        video_url: "",
+        duration_seconds: 0,
+        loop: true,
+        gradient_colors: ["#FF6B6B", "#4ECDC4"],
+        section_bg_color: "#FFF5F5",
+        primary_text_color: "#1A1A1A",
+        secondary_text_color: "#888888",
+        accent_color: "#FF6B6B",
+      });
+    }
+
+    res.status(200).json(celebration);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// ✅ GET ALL
+export const getAllCelebrations = async (req, res) => {
+  try {
+    const data = await Celebration.find().sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: data.length,
+      data,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// ✅ UPDATE
+// ✅ UPDATE CELEBRATION - Fixed
+export const updateCelebration = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    let updateData = { ...req.body };
+
+    // ✅ Parse gradient_colors if it's a string
+    if (updateData.gradient_colors && typeof updateData.gradient_colors === 'string') {
+      try {
+        updateData.gradient_colors = JSON.parse(updateData.gradient_colors);
+      } catch(e) {
+        updateData.gradient_colors = ['#FF6B6B', '#4ECDC4'];
+      }
+    }
+
+    // ✅ अगर नया video आया
+    if (req.files && req.files.video) {
+      const file = req.files.video;
+      const isGif = file.mimetype === "image/gif";
+
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "celebrations",
+        resource_type: isGif ? "image" : "video",
+      });
+
+      updateData.video_url = result.secure_url;
+    }
+
+    const updated = await Celebration.findByIdAndUpdate(
+      id,
+      updateData,
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: "Celebration not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Updated successfully",
+      data: updated,
+    });
+
+  } catch (error) {
+    console.error("Update Celebration Error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+// ✅ DELETE
+export const deleteCelebration = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const deleted = await Celebration.findByIdAndDelete(id);
+
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Celebration not found",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Deleted successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+
+export const getAllSimpleBusinessCards = async (req, res) => {
+  try {
+    const businessCards = await BusinessCard.find()
+      .sort({ createdAt: -1 })
+      .select([
+        "_id",
+        "previewImage"
+      ]);
+
+    res.status(200).json({
+      success: true,
+      total: businessCards.length,
+      data: businessCards
+    });
+  } catch (error) {
+    console.error("Error fetching business cards:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching business cards",
       error: error.message
     });
   }

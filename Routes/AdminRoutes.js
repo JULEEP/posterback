@@ -62,6 +62,13 @@ import {
     setAmount,
     getAllAmounts,
     deleteAmount,
+    createCelebration,
+    getCelebration,
+    getAllCelebrations,
+    updateCelebration,
+    deleteCelebration,
+    getAllSimpleBusinessCards,
+    getAllLogoCategoriesForAdmin,
 } from "../Controller/AdminController.js";
 import { getAllCategoriesForAdmin } from "../Controller/CategoryController.js";
 
@@ -90,6 +97,7 @@ router.put('/updatelogo/:logoId', updateLogo);
 router.delete('/deletelogo/:logoId', deleteLogo);
 router.post('/createbusinesscard', createBusinessCard);
 router.get('/getbusinesscards', getAllBusinessCards);
+router.get('/getbusinesscardsforusers', getAllSimpleBusinessCards);
 router.put('/updatebusinesscard/:businessCardId', updateBusinessCard);
 router.delete('/deletebusinesscard/:businessCardId', deleteBusinessCard);
 router.post('/register', registerAdmin);
@@ -105,7 +113,7 @@ router.get("/getredemption-requests", getAllRedemptionRequests);
 
 router.post('/createlogocategory', createLogoCategory);
 router.get('/getlogocategories/:userId', getAllLogoCategories);
-router.get('/getlogocategories', getAllCategoriesForAdmin);
+router.get('/getlogocategories', getAllLogoCategoriesForAdmin);
 router.put('/updatelogocategory/:id', updateLogoCategory);
 router.delete('/deletelogocategory/:id', deleteLogoCategory);
 
@@ -144,6 +152,13 @@ router.delete("/deletewallet", deleteWalletConfig);
 router.post("/setamount", setAmount);
 router.get("/allamount", getAllAmounts);
 router.delete("/amount/:id", deleteAmount);
+
+
+router.post("/createcelebration", createCelebration);
+router.get("/getactivecelebration", getCelebration);
+router.get("/allcelebrations", getAllCelebrations);
+router.put("/updatecelebration/:id", updateCelebration);
+router.delete("/deletecelebration/:id", deleteCelebration);
 
 
 export default router;

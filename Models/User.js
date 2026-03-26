@@ -102,6 +102,22 @@ referredBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }
     },
   ],
 
+    rewardHistory: [
+    {
+      date: {
+        type: String, // or Date if you prefer
+      },
+      duration: {
+        type: Number,
+        default: 0,
+      },
+      amount: {
+        type: Number,
+        default: 0,
+      },
+    },
+  ],
+
     userBusinessCards: { type: Array, default: [] },
   free7DayTrial: {
   type: Boolean,

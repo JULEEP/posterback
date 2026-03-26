@@ -59,7 +59,12 @@ import {
      removeBackground,
      addWalletReward,
      addUserBusinessCard,
-     getUserBusinessCards
+     getUserBusinessCards,
+     getSingleBusinessCard,
+     getTodayReward,
+     createUserPayment,
+     getUserPaymentsByUserId,
+     getAllUserPaymentsAdmin
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -142,9 +147,13 @@ router.delete("/deletenotifications/:userId", deleteNotificationsByIds);
 router.post('/api/auth/google', googleLogin);
 router.post("/remove-bg", removeBackground);
 router.post("/addwalletrewaqrd/:userId", addWalletReward);
+router.get("/gettodayswalletrewaqrd/:userId", getTodayReward);
 router.post("/addbusinessdetails/:userId", addUserBusinessCard);
 router.get("/getbusinesscards/:userId", getUserBusinessCards);
-
+router.get("/getsinglebusinesscards/:userId/:businessCardId", getSingleBusinessCard);
+router.post("/payfordownloads/:userId", createUserPayment);
+router.get("/mypaymentshistory/:userId", getUserPaymentsByUserId);
+router.get("/getalluserpayments", getAllUserPaymentsAdmin);
 
 
 

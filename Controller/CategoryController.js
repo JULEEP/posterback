@@ -113,7 +113,7 @@ async function translateToHindi(text) {
 // 📦 Get all categories (Simple version)
 export const getAllCategoriesForAdmin = async (req, res) => {
   try {
-    const categories = await LogoCategory.find().sort({ createdAt: -1 });
+    const categories = await Category.find().sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,

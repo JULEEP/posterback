@@ -136,25 +136,72 @@ cron.schedule('0 0 * * *', async () => {
 console.log('✅ Birthday/Anniversary cron job scheduled for 12:00 AM');
 
 // Daily Greeting Notifications at 9 AM
-cron.schedule('0 9 * * *', async () => {
-  console.log('⏰ Running daily greeting notifications at:', new Date().toISOString());
+cron.schedule('* * * * *', async () => {
+  const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+
+  console.log('\n🔔 ================= GREETING CRON START =================');
+  console.log('⏰ Current Time (IST):', now);
+
   try {
     const users = await User.find({ fcmToken: { $ne: null } });
+
+    console.log(`👥 Total users to send greeting: ${users.length}`);
+
+    // 🔥 Detect greeting type
+    const hour = new Date().toLocaleString("en-US", {
+      timeZone: "Asia/Kolkata",
+      hour: "numeric",
+      hour12: false,
+    });
+
+    const currentHour = parseInt(hour);
+    let greetingType = "";
+
+    if (currentHour >= 5 && currentHour < 12) {
+      greetingType = "🌞 Good Morning";
+    } else if (currentHour >= 12 && currentHour < 17) {
+      greetingType = "☀️ Good Afternoon";
+    } else if (currentHour >= 17 && currentHour < 21) {
+      greetingType = "🌆 Good Evening";
+    } else {
+      greetingType = "🌙 Good Night";
+    }
+
+    console.log(`📢 Greeting Type: ${greetingType}`);
+    console.log('🚀 Sending notifications...\n');
+
     for (const user of users) {
+      const title = getGreeting(user.name);
+
       await sendPushNotification({
         fcmToken: user.fcmToken,
-        title: getGreeting(user.name),
+        title,
         body: "🌟 Start your day with something special!",
         data: { type: "DAILY_GREETING" }
       });
+
+      // 🔹 Per user log
+      console.log(`✅ Sent to: ${user.name} (${user.mobile || "no mobile"}) → ${title}`);
     }
-    console.log(`✅ Sent daily greetings to ${users.length} users at:`, new Date().toISOString());
+
+    console.log('\n✅ All greetings sent successfully!');
+    console.log(`📊 Total Sent: ${users.length}`);
+
+    // 🔥 Next greeting hint
+    let nextGreeting = "";
+    if (greetingType.includes("Morning")) nextGreeting = "☀️ Afternoon";
+    else if (greetingType.includes("Afternoon")) nextGreeting = "🌆 Evening";
+    else if (greetingType.includes("Evening")) nextGreeting = "🌙 Night";
+    else nextGreeting = "🌞 Morning";
+
+    console.log(`🔮 Next Greeting Cycle: ${nextGreeting}`);
+
   } catch (err) {
     console.error('❌ Daily greeting cron failed:', err);
   }
-});
 
-console.log('✅ Daily greeting cron job scheduled for 9:00 AM');
+  console.log('🔔 ================= GREETING CRON END =================\n');
+});
 
 // Trial Expiry Cron - Run at 12:05 AM (5 minutes after midnight)
 // 7 days trial from createdAt
@@ -203,6 +250,73 @@ cron.schedule("5 0 * * *", async () => {
 
 console.log('✅ Trial expiry cron job scheduled for 12:05 AM (based on createdAt)');
 
+
+// Razorpay webhook route - sirf user payments ke liye
+app.post("/razorpay-webhook", async (req, res) => {
+  try {
+    const secret = "Business@25";
+    const signature = req.headers["x-razorpay-signature"];
+    const body = JSON.stringify(req.body);
+
+    // Signature verify
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(body)
+      .digest("hex");
+
+    if (signature !== expectedSignature) {
+      return res.status(400).send("Invalid signature");
+    }
+
+    const event = req.body;
+
+    // ✅ Payment captured event
+    if (event.event === "payment.captured") {
+      const payment = event.payload.payment.entity;
+      
+      // Get userPaymentId from notes
+      const userPaymentId = payment.notes?.userPaymentId;
+      
+      if (!userPaymentId) {
+        console.log("⚠️ No userPaymentId found in notes");
+        return res.status(400).send("userPaymentId missing in payment notes");
+      }
+      
+      // Find and update user payment
+      const userPayment = await UserPayments.findById(userPaymentId);
+      
+      if (!userPayment) {
+        console.log("❌ User payment not found:", userPaymentId);
+        return res.status(404).send("User payment not found");
+      }
+      
+      // Check if already paid (prevent duplicate updates)
+      if (userPayment.status === "paid") {
+        console.log("⚠️ User payment already paid:", userPaymentId);
+        return res.json({ status: "ok" });
+      }
+      
+      // Update payment status
+      userPayment.status = "paid";
+      userPayment.paidAt = new Date();
+      userPayment.transactionId = payment.id;
+      await userPayment.save();
+      
+      console.log("✅ User payment confirmed via webhook:", {
+        id: userPayment._id,
+        userId: userPayment.userId,
+        itemName: userPayment.itemName,
+        amount: userPayment.amount,
+        transactionId: payment.id
+      });
+    }
+
+    res.json({ status: "ok" });
+  } catch (err) {
+    console.error("❌ Razorpay webhook failed:", err);
+    res.status(500).send("Webhook error");
+  }
+});
 // ------------------------
 // Routes
 // ------------------------

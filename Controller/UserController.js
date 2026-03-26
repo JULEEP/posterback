@@ -46,6 +46,9 @@ import Notification from '../Models/Notification.js';
 import { exec } from "child_process";
 import WalletConfig from '../Models/WalletConfig.js';
 import BusinessCard from '../Models/BusinessCard.js';
+import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas';
+import { PDFDocument } from 'pdf-lib';
+import UserPayments from '../Models/UserPayments.js';
 
 
 dayjs.extend(customParseFormat);
@@ -1276,10 +1279,10 @@ export const deleteStory = async (req, res) => {
 };
 
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_hNwWuDNHuEICmT',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || 'haiixCtWn3RTXzUWAwZJSQjg'
-});
+// const razorpay = new Razorpay({
+//   key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_hNwWuDNHuEICmT',
+//   key_secret: process.env.RAZORPAY_KEY_SECRET || 'haiixCtWn3RTXzUWAwZJSQjg'
+// });
 
 
 // Controller to handle the plan purchase
@@ -4852,6 +4855,7 @@ export const removeBackground = async (req, res) => {
 export const addWalletReward = async (req, res) => {
   try {
     const { userId } = req.params;
+    const { date, duration } = req.body;
 
     const user = await User.findById(userId);
     if (!user) {
@@ -4870,7 +4874,16 @@ export const addWalletReward = async (req, res) => {
       });
     }
 
+    // wallet update
     user.wallet = (user.wallet || 0) + config.amount;
+
+    // store reward history
+    user.rewardHistory.push({
+      date,
+      duration,
+      amount: config.amount,
+    });
+
     await user.save();
 
     return res.status(200).json({
@@ -4878,6 +4891,8 @@ export const addWalletReward = async (req, res) => {
       message: "Wallet updated successfully",
       addedAmount: config.amount,
       wallet: user.wallet,
+      date,
+      duration,
     });
 
   } catch (error) {
@@ -4890,7 +4905,41 @@ export const addWalletReward = async (req, res) => {
 };
 
 
-// Add Business Card to User
+export const getTodayReward = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const today = new Date().toISOString().split("T")[0];
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const todayData = user.rewardHistory.find(
+      (item) => item.date === today
+    );
+
+    return res.status(200).json({
+      success: true,
+      amount: todayData ? todayData.amount : 0,
+      duration: todayData ? todayData.duration : 0,
+      date: todayData ? todayData.date : today,
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
 export const addUserBusinessCard = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -4918,7 +4967,28 @@ export const addUserBusinessCard = async (req, res) => {
       });
     }
 
-    // Create business card object with only basic details
+    // Logo upload (Cloudinary)
+    let logoUrl = businessCardData.logo || "";
+    if (req.files && req.files.logo) {
+      const file = req.files.logo;
+      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "business_cards",
+        resource_type: "auto",
+      });
+      logoUrl = result.secure_url;
+    }
+
+    // ✅ socialLinks handling: JSON parse if sent as string
+    let socialLinks = [];
+    if (businessCardData.socialLinks) {
+      try {
+        socialLinks = JSON.parse(businessCardData.socialLinks);
+        if (!Array.isArray(socialLinks)) socialLinks = [];
+      } catch (err) {
+        socialLinks = [];
+      }
+    }
+
     const newBusinessCard = {
       name: businessCardData.name || '',
       title: businessCardData.title || '',
@@ -4927,8 +4997,8 @@ export const addUserBusinessCard = async (req, res) => {
       phone: businessCardData.phone || '',
       address: businessCardData.address || '',
       website: businessCardData.website || '',
-      logo: businessCardData.logo || '',
-      socialLinks: businessCardData.socialLinks || [], // Social links array
+      logo: logoUrl,
+      socialLinks, // ✅ updated here
       createdAt: new Date(),
       updatedAt: new Date(),
       cardId: Date.now().toString()
@@ -4953,93 +5023,910 @@ export const addUserBusinessCard = async (req, res) => {
     });
   }
 };
-
-
-// ✅ Get all Business Cards - TemplateImage pe user data map karke dikhao
+// ─────────────────────────────────────────────
+// Helper: URL se image Buffer fetch karo
+// ─────────────────────────────────────────────
+const fetchImageBuffer = async (url) => {
+  const response = await axios.get(url, { responseType: 'arraybuffer' });
+  return Buffer.from(response.data);
+};
+ 
+// ─────────────────────────────────────────────
+// Helper: Template image pe user data overlay karo
+// Returns: Cloudinary URL of overlaid image
+// ─────────────────────────────────────────────
+const overlayTextOnTemplate = async (templateImageUrl, textStyles, logoUrl, logoSettings, socialLinks) => {
+  try {
+    // 1. Template image load karo
+    const templateBuffer = await fetchImageBuffer(templateImageUrl);
+    const templateImg = await loadImage(templateBuffer);
+ 
+    const CARD_W = templateImg.width;
+    const CARD_H = templateImg.height;
+ 
+    // 2. Canvas banao template size ka
+    const canvas = createCanvas(CARD_W, CARD_H);
+    const ctx = canvas.getContext('2d');
+ 
+    // 3. Template image draw karo
+    ctx.drawImage(templateImg, 0, 0, CARD_W, CARD_H);
+ 
+    // 4. Text fields overlay karo
+    const fields = ['name', 'title', 'company', 'email', 'phone', 'address', 'website'];
+ 
+    for (const field of fields) {
+      const style = textStyles?.[field];
+      if (!style || !style.text) continue; // empty text skip
+ 
+      const fontSize = style.fontSize || 14;
+      const fontWeight = style.fontWeight || 'normal';
+      const fontFamily = 'sans-serif';
+      const color = style.color || '#000000';
+      const italic = style.italic ? 'italic ' : '';
+ 
+      // X, Y - ye template ke stored coordinates hain
+      // Canvas coordinates: x, y as-is (already in px relative to card)
+      const x = style.x ?? 50;
+      const y = style.y ?? 100;
+ 
+      ctx.save();
+      ctx.font = `${italic}${fontWeight} ${fontSize}px ${fontFamily}`;
+      ctx.fillStyle = color;
+      ctx.textBaseline = 'top';
+ 
+      // Underline support
+      if (style.underline) {
+        const textWidth = ctx.measureText(style.text).width;
+        ctx.fillRect(x, y + fontSize + 2, textWidth, 1);
+      }
+ 
+      ctx.fillText(style.text, x, y);
+      ctx.restore();
+    }
+ 
+    // 5. Logo overlay karo (agar logo URL hai)
+    if (logoUrl && logoSettings) {
+      try {
+        const logoBuffer = await fetchImageBuffer(logoUrl);
+        const logoImg = await loadImage(logoBuffer);
+ 
+        const lx = logoSettings.x ?? 20;
+        const ly = logoSettings.y ?? 20;
+        const lw = logoSettings.width ?? 70;
+        const lh = logoSettings.height ?? 70;
+        const shape = logoSettings.shape || 'rectangle';
+        const br = logoSettings.borderRadius || 0;
+ 
+        ctx.save();
+ 
+        // Clipping path (circle ya rounded rectangle)
+        if (shape === 'circle') {
+          ctx.beginPath();
+          ctx.arc(lx + lw / 2, ly + lh / 2, Math.min(lw, lh) / 2, 0, Math.PI * 2);
+          ctx.clip();
+        } else if (br > 0) {
+          ctx.beginPath();
+          ctx.roundRect(lx, ly, lw, lh, br);
+          ctx.clip();
+        }
+ 
+        ctx.drawImage(logoImg, lx, ly, lw, lh);
+ 
+        // Border draw karo (agar borderWidth > 0)
+        if (logoSettings.borderWidth > 0) {
+          ctx.strokeStyle = logoSettings.borderColor || '#000000';
+          ctx.lineWidth = logoSettings.borderWidth;
+          if (shape === 'circle') {
+            ctx.beginPath();
+            ctx.arc(lx + lw / 2, ly + lh / 2, Math.min(lw, lh) / 2, 0, Math.PI * 2);
+            ctx.stroke();
+          } else {
+            ctx.strokeRect(lx, ly, lw, lh);
+          }
+        }
+ 
+        ctx.restore();
+      } catch (logoErr) {
+        console.warn('Logo load failed, skipping:', logoErr.message);
+      }
+    }
+ 
+    // 6. Social links icons overlay karo
+    if (socialLinks && socialLinks.length > 0) {
+      for (const social of socialLinks) {
+        if (!social.iconUrl) continue;
+ 
+        try {
+          const iconBuffer = await fetchImageBuffer(social.iconUrl);
+          const iconImg = await loadImage(iconBuffer);
+ 
+          const ix = social.x ?? 50;
+          const iy = social.y ?? 400;
+          const iconSize = social.iconSize ?? 30;
+ 
+          ctx.drawImage(iconImg, ix, iy, iconSize, iconSize);
+ 
+          // URL text bhi show karo (agar showUrl true hai)
+          if (social.showUrl && social.url) {
+            ctx.save();
+            ctx.font = `${social.urlFontSize || 12}px sans-serif`;
+            ctx.fillStyle = social.urlColor || '#666666';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(social.url, ix + iconSize + 8, iy + iconSize / 2);
+            ctx.restore();
+          }
+        } catch (iconErr) {
+          console.warn(`Icon load failed for ${social.platform}, skipping:`, iconErr.message);
+        }
+      }
+    }
+ 
+    // 7. Canvas ko PNG buffer mein convert karo
+    const outputBuffer = canvas.toBuffer('image/png');
+ 
+    // 8. Cloudinary pe upload karo
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'business-cards/overlays',
+          format: 'png',
+          resource_type: 'image',
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      uploadStream.end(outputBuffer);
+    });
+ 
+    return uploadResult.secure_url;
+ 
+  } catch (error) {
+    console.error('overlayTextOnTemplate error:', error.message);
+    return null; // fallback: null return karo
+  }
+};
+ 
+// ─────────────────────────────────────────────
+// ✅ GET All Business Cards Controller
+// ─────────────────────────────────────────────
 export const getUserBusinessCards = async (req, res) => {
   try {
     const { userId } = req.params;
-
+ 
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "User ID is required"
+        message: 'User ID is required',
       });
     }
-
-    // 1. User se userBusinessCards array fetch karo (user ka personal data)
+ 
+    // 1. User fetch karo
     const user = await User.findById(userId);
-    
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
+        message: 'User not found',
       });
     }
-
-    // 2. BusinessCard schema se saare cards fetch karo (templates ke saath)
-    const templateCards = await BusinessCard.find().sort({ createdAt: -1 });
-
-    // 3. User ke data ko templateCard ke structure mein map karo
-    const userMappedCards = (user.userBusinessCards || []).map(userCard => {
-      // Find matching template or use first template
-      const template = templateCards[0] || {};
-      
+ 
+    // 2. Saare templates fetch karo
+    const templates = await BusinessCard.find().sort({ createdAt: -1 });
+ 
+    // 3. User ke cards process karo — har card pe template overlay karo
+    const userMappedCards = await Promise.all(
+      (user.userBusinessCards || []).map(async (userCard) => {
+        // Pehla template use karo (ya matching template logic add kar sakte ho)
+        const template = templates[0] || {};
+        const templateTextStyles = template.textStyles || {};
+ 
+        // Template positions + user data combine karo
+        const overlayTextStyles = {};
+        const fields = ['name', 'title', 'company', 'email', 'phone', 'address', 'website'];
+ 
+        fields.forEach((field) => {
+          const templateStyle = templateTextStyles[field] || {};
+          overlayTextStyles[field] = {
+            fontSize: templateStyle.fontSize || 24,
+            fontWeight: templateStyle.fontWeight || 'normal',
+            color: templateStyle.color || '#000000',
+            italic: templateStyle.italic || false,
+            underline: templateStyle.underline || false,
+            x: templateStyle.x ?? 50,
+            y: templateStyle.y ?? 100,
+            text: userCard[field] || '', // 👈 User ka actual data
+          };
+        });
+ 
+        const overlayLogoSettings = template.logoSettings || {
+          x: 20, y: 20, width: 70, height: 70,
+          borderRadius: 8, borderWidth: 0, borderColor: '#000000', shape: 'rectangle',
+        };
+ 
+        const overlayDesign = template.design || {
+          backgroundColor: '#ffffff', textColor: '#000000', accentColor: '#3b82f6',
+          fontFamily: 'Poppins', fontSize: '14', showLogo: true, showQrCode: false,
+          roundedCorners: true, shadow: true, border: true,
+        };
+ 
+        // Social links merge karo
+        const userSocialLinks = userCard.socialLinks || [];
+        const templateSocialLinks = template.socialLinks || [];
+ 
+        const mergedSocialLinks = userSocialLinks.map((userSocial, idx) => {
+          const templateSocial = templateSocialLinks[idx] || {};
+          return {
+            ...userSocial,
+            x: templateSocial.x ?? 50,
+            y: templateSocial.y ?? 400 + idx * 40,
+            iconSize: templateSocial.iconSize || 30,
+            showUrl: templateSocial.showUrl !== undefined ? templateSocial.showUrl : true,
+            urlColor: templateSocial.urlColor || '#666666',
+            urlFontSize: templateSocial.urlFontSize || 12,
+          };
+        });
+ 
+        // ✅ Template image pe overlay karo — overlaid image URL generate karo
+        const templateImageUrl = template.templateImage || '';
+        let overlaidImageUrl = '';
+ 
+        if (templateImageUrl) {
+          overlaidImageUrl = await overlayTextOnTemplate(
+            templateImageUrl,
+            overlayTextStyles,
+            userCard.logo || '',
+            overlayLogoSettings,
+            mergedSocialLinks
+          );
+        }
+ 
+        return {
+          _id: userCard.cardId || new mongoose.Types.ObjectId().toString(),
+ 
+          // Overlay data
+          textStyles: overlayTextStyles,
+          logoSettings: overlayLogoSettings,
+          design: overlayDesign,
+          socialLinks: mergedSocialLinks,
+ 
+          useTemplate: true,
+          templateImage: templateImageUrl,           // Original template (reference ke liye)
+          overlaidImage: overlaidImageUrl || '',     // ✅ User data overlay ki hui image
+          qrCode: template.qrCode || '',
+ 
+          createdAt: userCard.createdAt,
+          updatedAt: userCard.updatedAt,
+ 
+          // User ka original data
+          name: userCard.name || '',
+          title: userCard.title || '',
+          company: userCard.company || '',
+          email: userCard.email || '',
+          phone: userCard.phone || '',
+          address: userCard.address || '',
+          website: userCard.website || '',
+          logo: userCard.logo || '',
+          previewImage: userCard.previewImage || overlaidImageUrl || '', // ✅ overlaid image fallback
+ 
+          source: 'user_profile',
+        };
+      })
+    );
+ 
+    // 4. Original templates include karo (unchanged)
+    const originalTemplates = templates.map((card) => {
+      const cardObj = card.toObject();
+      const fields = ['name', 'title', 'company', 'email', 'phone', 'address', 'website'];
+ 
+      fields.forEach((field) => {
+        if (cardObj.textStyles && cardObj.textStyles[field]) {
+          cardObj.textStyles[field].text = cardObj[field] || '';
+        }
+      });
+ 
       return {
-        // Template se structure le lo
-        _id: userCard.cardId || new mongoose.Types.ObjectId(),
-        textStyles: template.textStyles || {},
-        logoSettings: template.logoSettings || {},
-        design: template.design || {},
-        useTemplate: template.useTemplate || false,
-        templateImage: template.templateImage || '',
-        qrCode: template.qrCode || '',
-        createdAt: userCard.createdAt,
-        updatedAt: userCard.updatedAt,
-        
-        // User se actual data
-        name: userCard.name || '',
-        title: userCard.title || '',
-        company: userCard.company || '',
-        email: userCard.email || '',
-        phone: userCard.phone || '',
-        address: userCard.address || '',
-        website: userCard.website || '',
-        logo: userCard.logo || '',
-        previewImage: userCard.previewImage || '',
-        
-        // Social links user ke
-        socialLinks: userCard.socialLinks || [],
-        
-        source: 'user_profile'
+        ...cardObj,
+        source: 'business_card_schema',
       };
     });
-
-    // 4. Template cards ko original format mein rakho
-    const originalTemplateCards = templateCards.map(card => ({
-      ...card.toObject(),
-      source: 'business_card_schema'
-    }));
-
-    // 5. Dono ko combine karo
-    const combinedCards = [...userMappedCards, ...originalTemplateCards];
-
+ 
+    // 5. Combine karo
+    const combinedCards = [...userMappedCards, ...originalTemplates];
+ 
     res.status(200).json({
       success: true,
       counts: {
         fromUserProfile: userMappedCards.length,
-        fromBusinessCardSchema: originalTemplateCards.length,
-        total: combinedCards.length
+        fromBusinessCardSchema: originalTemplates.length,
+        total: combinedCards.length,
       },
-      data: combinedCards
+      data: combinedCards,
+    });
+ 
+  } catch (error) {
+    console.error('Error fetching business cards:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching business cards',
+      error: error.message,
+    });
+  }
+};
+
+
+const convertImageToPDF = async (imageUrl) => {
+  try {
+    if (!imageUrl) {
+      console.warn('No image URL provided for PDF conversion');
+      return null;
+    }
+
+    // 1. Image fetch karo
+    const imageBuffer = await fetchImageBuffer(imageUrl);
+    
+    // 2. PDF document create karo
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage();
+    
+    // 3. Image load karo (PNG ya JPG)
+    let image;
+    try {
+      image = await pdfDoc.embedPng(imageBuffer);
+    } catch (err) {
+      try {
+        image = await pdfDoc.embedJpg(imageBuffer);
+      } catch (jpgErr) {
+        console.error('Failed to embed image:', jpgErr.message);
+        return null;
+      }
+    }
+    
+    // 4. Image dimensions lo
+    const { width, height } = image.scale(1);
+    
+    // 5. Page size set karo image ke according
+    page.setSize(width, height);
+    
+    // 6. Image draw karo
+    page.drawImage(image, {
+      x: 0,
+      y: 0,
+      width: width,
+      height: height,
+    });
+    
+    // 7. PDF buffer generate karo
+    const pdfBuffer = await pdfDoc.save();
+    
+    // 8. Cloudinary pe PDF upload karo
+    const uploadResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'business-cards/pdfs',
+          resource_type: 'auto',  // 'auto' se Cloudinary automatically detect karega
+          public_id: `business_card_${Date.now()}`,  // .pdf mat lagao, Cloudinary auto add karega
+          format: 'pdf',  // format specify kar do
+          overwrite: true,
+        },
+        (error, result) => {
+          if (error) {
+            console.error('Cloudinary upload error:', error);
+            reject(error);
+          } else {
+            resolve(result);
+          }
+        }
+      );
+      uploadStream.end(pdfBuffer);
+    });
+    
+    // 9. Secure URL return karo (bina fl_attachment ke, browser me open hogi)
+    // Cloudinary automatically .pdf extension add kar dega
+    return uploadResult.secure_url;
+    
+  } catch (error) {
+    console.error('Error converting image to PDF:', error.message);
+    return null;
+  }
+};
+
+// export const getSingleBusinessCard = async (req, res) => {
+//    try {
+//     const { userId, businessCardId } = req.params;
+
+//     if (!userId || !businessCardId) {
+//       return res.status(400).json({
+//         success: false,
+//         message: 'User ID and Template ID are required',
+//       });
+//     }
+
+//     // 1. User fetch karo
+//     const user = await User.findById(userId);
+//     if (!user) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'User not found',
+//       });
+//     }
+
+//     // 2. Template (Business Card) fetch karo
+//     const template = await BusinessCard.findById(businessCardId);
+//     if (!template) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Template not found',
+//       });
+//     }
+
+//     // 3. User ke saare business cards process karo
+//     const processedCards = await Promise.all(
+//       (user.userBusinessCards || []).map(async (userCard, index) => {
+//         // Template positions + user card data combine karo
+//         const templateTextStyles = template.textStyles || {};
+//         const overlayTextStyles = {};
+//         const fields = ['name', 'title', 'company', 'email', 'phone', 'address', 'website'];
+
+//         fields.forEach((field) => {
+//           const templateStyle = templateTextStyles[field] || {};
+//           overlayTextStyles[field] = {
+//             fontSize: templateStyle.fontSize || 24,
+//             fontWeight: templateStyle.fontWeight || 'normal',
+//             color: templateStyle.color || '#000000',
+//             italic: templateStyle.italic || false,
+//             underline: templateStyle.underline || false,
+//             x: templateStyle.x ?? 50,
+//             y: templateStyle.y ?? 100,
+//             text: userCard[field] || '',
+//           };
+//         });
+
+//         // Logo settings
+//         const overlayLogoSettings = template.logoSettings || {
+//           x: 20, y: 20, width: 70, height: 70,
+//           borderRadius: 8, borderWidth: 0, borderColor: '#000000', shape: 'rectangle',
+//         };
+
+//         // Design settings
+//         const overlayDesign = template.design || {
+//           backgroundColor: '#ffffff', textColor: '#000000', accentColor: '#3b82f6',
+//           fontFamily: 'Poppins', fontSize: '14', showLogo: true, showQrCode: false,
+//           roundedCorners: true, shadow: true, border: true,
+//         };
+
+//         // Social links
+//         const userSocialLinks = userCard.socialLinks || [];
+//         const templateSocialLinks = template.socialLinks || [];
+        
+//         const mergedSocialLinks = userSocialLinks.map((userSocial, idx) => {
+//           const templateSocial = templateSocialLinks[idx] || {};
+//           return {
+//             platform: userSocial.platform,
+//             url: userSocial.url,
+//             iconUrl: userSocial.iconUrl,
+//             iconName: userSocial.iconName,
+//             color: userSocial.color,
+//             x: templateSocial.x ?? 50,
+//             y: templateSocial.y ?? 400 + idx * 40,
+//             iconSize: templateSocial.iconSize || 30,
+//             showUrl: templateSocial.showUrl !== undefined ? templateSocial.showUrl : true,
+//             urlColor: templateSocial.urlColor || '#666666',
+//             urlFontSize: templateSocial.urlFontSize || 12,
+//           };
+//         });
+
+//         // Overlay image generate karo
+//         const templateImageUrl = template.templateImage || '';
+//         let overlaidImageUrl = '';
+
+//         if (templateImageUrl) {
+//           overlaidImageUrl = await overlayTextOnTemplate(
+//             templateImageUrl,
+//             overlayTextStyles,
+//             userCard.logo || '',
+//             overlayLogoSettings,
+//             mergedSocialLinks
+//           );
+//         }
+
+//         // 🔥 PDF generate karo overlaid image se
+//         let pdfUrl = '';
+//         if (overlaidImageUrl) {
+//           pdfUrl = await convertImageToPDF(overlaidImageUrl);
+//         }
+
+//         return {
+//           _id: userCard.cardId || userCard._id || `card_${index}`,
+          
+//           // User card ka original data
+//           name: userCard.name || '',
+//           title: userCard.title || '',
+//           company: userCard.company || '',
+//           email: userCard.email || '',
+//           phone: userCard.phone || '',
+//           address: userCard.address || '',
+//           website: userCard.website || '',
+//           logo: userCard.logo || '',
+//           previewImage: userCard.previewImage || overlaidImageUrl || '',
+//           socialLinks: mergedSocialLinks,
+          
+//           // Images (PNG and PDF)
+//           overlaidImage: overlaidImageUrl || '',           // PNG image
+//           overlaidPdf: pdfUrl || '',                       // 🔥 PDF version
+          
+//           // Template styling
+//           templateId: template._id,
+//           templateImage: templateImageUrl,
+//           textStyles: overlayTextStyles,
+//           logoSettings: overlayLogoSettings,
+//           design: overlayDesign,
+          
+//           // Metadata
+//           createdAt: userCard.createdAt,
+//           updatedAt: userCard.updatedAt,
+//         };
+//       })
+//     );
+
+//     res.status(200).json({
+//       success: true,
+//       data: {
+//         template: {
+//           _id: template._id,
+//           name: template.name || 'Template',
+//           templateImage: template.templateImage,
+//         },
+//         userCards: processedCards,
+//         counts: {
+//           total: processedCards.length,
+//         },
+//       },
+//     });
+
+//   } catch (error) {
+//     console.error('Error fetching user business cards with template:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Error fetching business cards',
+//       error: error.message,
+//     });
+//   }
+// };
+
+
+export const getSingleBusinessCard = async (req, res) => {
+  try {
+    const { userId, businessCardId } = req.params;
+
+    if (!userId || !businessCardId) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID and Template ID are required',
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    const template = await BusinessCard.findById(businessCardId);
+    if (!template) {
+      return res.status(404).json({
+        success: false,
+        message: 'Template not found',
+      });
+    }
+
+    // Bas pehla user card process karenge (array nahi chahiye)
+    const userCard = (user.userBusinessCards || [])[0] || {};
+
+    const templateTextStyles = template.textStyles || {};
+    const overlayTextStyles = {};
+    const fields = ['name', 'title', 'company', 'email', 'phone', 'address', 'website'];
+
+    fields.forEach((field) => {
+      const templateStyle = templateTextStyles[field] || {};
+      overlayTextStyles[field] = {
+        fontSize: templateStyle.fontSize || 24,
+        fontWeight: templateStyle.fontWeight || 'normal',
+        color: templateStyle.color || '#000000',
+        italic: templateStyle.italic || false,
+        underline: templateStyle.underline || false,
+        x: templateStyle.x ?? 50,
+        y: templateStyle.y ?? 100,
+        text: userCard[field] || '',
+      };
+    });
+
+    const overlayLogoSettings = template.logoSettings || {
+      x: 20, y: 20, width: 70, height: 70,
+      borderRadius: 8, borderWidth: 0, borderColor: '#000000', shape: 'rectangle',
+    };
+
+    const userSocialLinks = userCard.socialLinks || [];
+    const templateSocialLinks = template.socialLinks || [];
+    const mergedSocialLinks = userSocialLinks.map((userSocial, idx) => {
+      const templateSocial = templateSocialLinks[idx] || {};
+      return {
+        platform: userSocial.platform,
+        url: userSocial.url,
+        iconUrl: userSocial.iconUrl,
+        iconName: userSocial.iconName,
+        color: userSocial.color,
+        x: templateSocial.x ?? 50,
+        y: templateSocial.y ?? 400 + idx * 40,
+        iconSize: templateSocial.iconSize || 30,
+        showUrl: templateSocial.showUrl !== undefined ? templateSocial.showUrl : true,
+        urlColor: templateSocial.urlColor || '#666666',
+        urlFontSize: templateSocial.urlFontSize || 12,
+      };
+    });
+
+    const templateImageUrl = template.templateImage || '';
+    let overlaidImageUrl = '';
+    if (templateImageUrl) {
+      overlaidImageUrl = await overlayTextOnTemplate(
+        templateImageUrl,
+        overlayTextStyles,
+        userCard.logo || '',
+        overlayLogoSettings,
+        mergedSocialLinks
+      );
+    }
+
+    let pdfUrl = '';
+    if (overlaidImageUrl) {
+      pdfUrl = await convertImageToPDF(overlaidImageUrl);
+    }
+
+    // ✅ Array ko object me convert karke response
+    const processedCard = {
+      overlaidImage: overlaidImageUrl || '',
+      overlaidPdf: pdfUrl || '',
+      templateId: template._id,
+    };
+
+    res.status(200).json({
+      success: true,
+      data: processedCard,
     });
 
   } catch (error) {
-    console.error("Error fetching business cards:", error);
+    console.error('Error fetching user business card:', error);
     res.status(500).json({
       success: false,
-      message: "Error fetching business cards",
-      error: error.message
+      message: 'Error fetching business card',
+      error: error.message,
+    });
+  }
+};
+
+
+const razorpay = new Razorpay({
+  key_id: "rzp_test_BxtRNvflG06PTV",
+  key_secret: "RecEtdcenmR7Lm4AIEwo4KFr",
+});
+
+
+export const createUserPayment = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { itemName, itemId, amount } = req.body;
+    
+    // File from form-data
+    const file = req.files?.media; // assuming field name is 'media'
+
+   
+
+    // Check if file is provided
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: "Media file (image/video) is required",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // Check if item exists in DB
+    let itemExists;
+    let folderName;
+    switch (itemName.toLowerCase()) {
+      case "poster":
+        itemExists = await Poster.exists({ _id: itemId });
+        folderName = "poster-payments";
+        break;
+      case "reels":
+        itemExists = await Reel.exists({ _id: itemId });
+        folderName = "reels-payments";
+        break;
+      case "sticker":
+        itemExists = await Sticker.exists({ _id: itemId });
+        folderName = "sticker-payments";
+        break;
+      case "logo":
+        itemExists = await Logo.exists({ _id: itemId });
+        folderName = "logo-payments";
+        break;
+      default:
+        return res.status(400).json({ success: false, message: "Invalid itemName" });
+    }
+
+    if (!itemExists) {
+      return res.status(404).json({ success: false, message: `${itemName} item not found` });
+    }
+
+    // Determine media type
+    const mediaType = file.mimetype.startsWith("image/") ? "image" : "video";
+    
+    // Upload to Cloudinary
+    let cloudinaryResult;
+    try {
+      cloudinaryResult = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: folderName,
+        resource_type: mediaType === "video" ? "video" : "image",
+      });
+      
+      // Delete temp file
+      fs.unlinkSync(file.tempFilePath);
+    } catch (uploadError) {
+      console.error("Cloudinary upload error:", uploadError);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload media",
+        error: uploadError.message,
+      });
+    }
+
+    // Create payment record with media URL
+    const payment = await UserPayments.create({
+      userId,
+      itemName: itemName.toLowerCase(),
+      itemId,
+      amount,
+      mediaUrl: cloudinaryResult.secure_url,
+      mediaType: mediaType,
+      status: "pending",
+      paidAt: null,
+      transactionId: null,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: `${itemName} payment initiated (Pending confirmation)`,
+      payment: {
+        _id: payment._id,
+        itemName: payment.itemName,
+        amount: payment.amount,
+        mediaUrl: payment.mediaUrl,
+        status: payment.status,
+      },
+    });
+
+  } catch (error) {
+    console.error("UserPayment Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error creating payment",
+      error: error.message,
+    });
+  }
+};
+
+export const getUserPaymentsByUserId = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "userId is required" });
+    }
+
+    const payments = await UserPayments.find({ userId })
+      .sort({ paidAt: -1 })
+      .lean();
+
+    // 🔥 Populate item details dynamically
+    const populatedPayments = await Promise.all(
+      payments.map(async (p) => {
+        let itemDetails = null;
+
+        switch (p.itemName.toLowerCase()) {
+          case "poster":
+            itemDetails = await Poster.findById(p.itemId).lean();
+            break;
+          case "reels":
+            itemDetails = await Reel.findById(p.itemId).lean();
+            break;
+          case "sticker":
+            itemDetails = await Sticker.findById(p.itemId).lean();
+            break;
+          case "logo":
+            itemDetails = await Logo.findById(p.itemId).lean();
+            break;
+        }
+
+        return {
+          ...p,
+          itemDetails, // populate item details here
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Payments for user ${userId} fetched successfully`,
+      data: populatedPayments,
+    });
+
+  } catch (error) {
+    console.error("Get UserPayments Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching user payments",
+      error: error.message,
+    });
+  }
+};
+
+
+export const getAllUserPaymentsAdmin = async (req, res) => {
+  try {
+    const payments = await UserPayments.find()
+      .sort({ paidAt: -1 })
+      .lean();
+
+    const populatedPayments = await Promise.all(
+      payments.map(async (p) => {
+        // 1️⃣ Populate item details dynamically
+        let itemDetails = null;
+        switch (p.itemName.toLowerCase()) {
+          case "poster":
+            itemDetails = await Poster.findById(p.itemId).lean();
+            break;
+          case "reels":
+            itemDetails = await Reel.findById(p.itemId).lean();
+            break;
+          case "sticker":
+            itemDetails = await Sticker.findById(p.itemId).lean();
+            break;
+          case "logo":
+            itemDetails = await Logo.findById(p.itemId).lean();
+            break;
+        }
+
+        // 2️⃣ Populate user details
+        const user = await User.findById(p.userId)
+          .select("name email mobile")
+          .lean();
+
+        return {
+          ...p,
+          itemDetails, // item info
+          user: user || null, // user info
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "All user payments fetched successfully with user info",
+      data: populatedPayments,
+    });
+
+  } catch (error) {
+    console.error("Get All UserPayments Admin Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching all user payments",
+      error: error.message,
     });
   }
 };

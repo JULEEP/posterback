@@ -12,6 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "@google-cloud/speech": "^6.7.1",
+    "@napi-rs/canvas": "^0.1.97",
     "apple-iap": "^0.0.0",
     "astronomy-engine": "^2.1.19",
     "axios": "^1.7.9",
@@ -47,6 +48,7 @@
     "nodemailer": "^6.10.0",
     "nodemon": "^3.1.9",
     "openai": "^4.80.0",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.15.2",
     "pg-sdk-node": "^2.0.2",
     "puppeteer": "^23.11.1",
