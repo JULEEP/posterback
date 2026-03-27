@@ -12,6 +12,8 @@ import cron from 'node-cron';
 import { Server } from 'socket.io';
 import cloudinary from './config/cloudinary.js';
 import dns from 'dns';
+import crypto from "crypto";
+
 
 // ✅ Fix DNS issue (MongoDB Atlas SRV)
 dns.setServers(['8.8.8.8', '8.8.4.4']);
@@ -33,6 +35,8 @@ import { getGreeting } from './utils/greeting.js';
 // Models
 import User from './Models/User.js';
 import Chat from './Models/Chat.js';
+import UserPayments from './Models/UserPayments.js';
+import BusinessCardPayment from './Models/BusinessCardPayment.js';
 
 dotenv.config();
 
@@ -91,11 +95,11 @@ connectDatabase();
 // ------------------------
 
 // Log that cron jobs are being scheduled
-console.log('⏰ Scheduling cron jobs...');
+
 
 // Daily Birthday & Anniversary SMS at 12:00 AM
 cron.schedule('0 0 * * *', async () => {
-  console.log('🔔 Running birthday/anniversary SMS cron at:', new Date().toISOString());
+
   const now = new Date();
   const todayDay = now.getDate();
   const todayMonth = now.getMonth() + 1;
@@ -112,8 +116,8 @@ cron.schedule('0 0 * * *', async () => {
     });
 
     for (const user of birthdayUsers) await sendBirthdaySMS(user.mobile);
-    console.log(`✅ Birthday SMS sent to ${birthdayUsers.length} users`);
 
+    
     // Anniversary
     const anniversaryUsers = await User.find({
       $expr: {
@@ -125,27 +129,27 @@ cron.schedule('0 0 * * *', async () => {
     });
 
     for (const user of anniversaryUsers) await sendAnniversarySMS(user.mobile);
-    console.log(`✅ Anniversary SMS sent to ${anniversaryUsers.length} users`);
 
-    console.log('✅ Birthday & anniversary SMS sent successfully at:', new Date().toISOString());
+    
+
   } catch (err) {
     console.error('❌ Birthday/Anniversary cron job failed:', err);
   }
 });
 
-console.log('✅ Birthday/Anniversary cron job scheduled for 12:00 AM');
+
 
 // Daily Greeting Notifications at 9 AM
 cron.schedule('* * * * *', async () => {
   const now = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
 
-  console.log('\n🔔 ================= GREETING CRON START =================');
-  console.log('⏰ Current Time (IST):', now);
 
+
+  
   try {
     const users = await User.find({ fcmToken: { $ne: null } });
 
-    console.log(`👥 Total users to send greeting: ${users.length}`);
+    //console.log(`👥 Total users to send greeting: ${users.length}`);
 
     // 🔥 Detect greeting type
     const hour = new Date().toLocaleString("en-US", {
@@ -167,9 +171,9 @@ cron.schedule('* * * * *', async () => {
       greetingType = "🌙 Good Night";
     }
 
-    console.log(`📢 Greeting Type: ${greetingType}`);
-    console.log('🚀 Sending notifications...\n');
 
+    
+    
     for (const user of users) {
       const title = getGreeting(user.name);
 
@@ -181,12 +185,12 @@ cron.schedule('* * * * *', async () => {
       });
 
       // 🔹 Per user log
-      console.log(`✅ Sent to: ${user.name} (${user.mobile || "no mobile"}) → ${title}`);
+
     }
 
-    console.log('\n✅ All greetings sent successfully!');
-    console.log(`📊 Total Sent: ${users.length}`);
 
+
+    
     // 🔥 Next greeting hint
     let nextGreeting = "";
     if (greetingType.includes("Morning")) nextGreeting = "☀️ Afternoon";
@@ -194,21 +198,21 @@ cron.schedule('* * * * *', async () => {
     else if (greetingType.includes("Evening")) nextGreeting = "🌙 Night";
     else nextGreeting = "🌞 Morning";
 
-    console.log(`🔮 Next Greeting Cycle: ${nextGreeting}`);
 
+    
   } catch (err) {
     console.error('❌ Daily greeting cron failed:', err);
   }
 
-  console.log('🔔 ================= GREETING CRON END =================\n');
+
 });
 
 // Trial Expiry Cron - Run at 12:05 AM (5 minutes after midnight)
 // 7 days trial from createdAt
 cron.schedule("5 0 * * *", async () => {
   try {
-    console.log("🔔 Running Trial Expiry Cron at:", new Date().toISOString());
 
+    
     // Calculate date 7 days ago
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
@@ -231,7 +235,7 @@ cron.schedule("5 0 * * *", async () => {
       }
     );
 
-    console.log(`✅ Trial Expiry Cron completed. Expired trials: ${result.modifiedCount} at ${new Date().toISOString()}`);
+
     
     // Optional: Log some sample users that got expired
     if (result.modifiedCount > 0) {
@@ -240,7 +244,7 @@ cron.schedule("5 0 * * *", async () => {
         createdAt: { $lt: sevenDaysAgo }
       }).limit(5).select('name email createdAt');
       
-      console.log('Sample expired users:', expiredUsers);
+
     }
 
   } catch (error) {
@@ -248,11 +252,94 @@ cron.schedule("5 0 * * *", async () => {
   }
 });
 
-console.log('✅ Trial expiry cron job scheduled for 12:05 AM (based on createdAt)');
 
 
-// Razorpay webhook route - sirf user payments ke liye
-app.post("/razorpay-webhook", async (req, res) => {
+
+
+app.post(
+  "/razorpay-webhook",
+  bodyParser.raw({ type: "application/json" }),
+  async (req, res) => {
+    console.log("🔥🔥 WEBHOOK HIT 🔥🔥");
+
+    try {
+      const secret = "Business@25";
+
+      const signature = req.headers["x-razorpay-signature"];
+      const rawBody = req.body;
+
+      const expectedSignature = crypto
+        .createHmac("sha256", secret)
+        .update(rawBody)
+        .digest("hex");
+
+      if (signature !== expectedSignature) {
+        console.log("❌ Signature mismatch");
+        return res.status(400).send("Invalid signature");
+      }
+
+      console.log("✅ Signature verified");
+
+      const event = JSON.parse(rawBody.toString());
+
+      if (event.event !== "payment.captured") {
+        return res.json({ status: "ignored" });
+      }
+
+      const payment = event.payload.payment.entity;
+
+      console.log("💰 Payment entity:", payment);
+
+      // 🔥 TRY MULTIPLE SOURCES
+      let userPaymentId =
+        payment.notes?.userPaymentId ||   // ✅ expected
+        payment.description ||            // ⚠️ fallback
+        payment.order_id ||               // ⚠️ fallback
+        null;
+
+      console.log("🆔 FINAL userPaymentId:", userPaymentId);
+
+      if (!userPaymentId) {
+        console.log("❌ userPaymentId NOT FOUND ANYWHERE");
+        return res.status(400).send("userPaymentId missing");
+      }
+
+      // 🔹 Validate ObjectId
+      if (!mongoose.Types.ObjectId.isValid(userPaymentId)) {
+        console.log("❌ Invalid ObjectId:", userPaymentId);
+        return res.status(400).send("Invalid userPaymentId");
+      }
+
+      const userPayment = await UserPayments.findById(userPaymentId);
+
+      if (!userPayment) {
+        console.log("❌ Payment not found in DB");
+        return res.status(404).send("Payment not found");
+      }
+
+      if (userPayment.status === "paid") {
+        console.log("⚠️ Already paid");
+        return res.json({ status: "ok" });
+      }
+
+      // ✅ UPDATE
+      userPayment.status = "paid";
+      userPayment.transactionId = payment.id;
+      userPayment.paidAt = new Date();
+
+      await userPayment.save();
+
+      console.log("✅ PAYMENT UPDATED:", userPayment._id);
+
+      return res.json({ status: "ok" });
+
+    } catch (error) {
+      console.error("❌ WEBHOOK ERROR:", error);
+      return res.status(500).send("Webhook error");
+    }
+  }
+);
+app.post("/razorpay-webhook-businesscard", async (req, res) => {
   try {
     const secret = "Business@25";
     const signature = req.headers["x-razorpay-signature"];
@@ -270,50 +357,43 @@ app.post("/razorpay-webhook", async (req, res) => {
 
     const event = req.body;
 
-    // ✅ Payment captured event
     if (event.event === "payment.captured") {
       const payment = event.payload.payment.entity;
-      
-      // Get userPaymentId from notes
-      const userPaymentId = payment.notes?.userPaymentId;
-      
-      if (!userPaymentId) {
-        console.log("⚠️ No userPaymentId found in notes");
-        return res.status(400).send("userPaymentId missing in payment notes");
+
+      const businessCardPaymentId = payment.notes?.businessCardPaymentId;
+      if (!businessCardPaymentId) {
+        console.log("⚠️ No businessCardPaymentId in notes");
+        return res.status(400).send("businessCardPaymentId missing");
       }
-      
-      // Find and update user payment
-      const userPayment = await UserPayments.findById(userPaymentId);
-      
-      if (!userPayment) {
-        console.log("❌ User payment not found:", userPaymentId);
-        return res.status(404).send("User payment not found");
+
+      const cardPayment = await BusinessCardPayment.findById(businessCardPaymentId);
+      if (!cardPayment) {
+        console.log("❌ Business card payment not found:", businessCardPaymentId);
+        return res.status(404).send("Business card payment not found");
       }
-      
-      // Check if already paid (prevent duplicate updates)
-      if (userPayment.status === "paid") {
-        console.log("⚠️ User payment already paid:", userPaymentId);
+
+      if (cardPayment.status === "paid") {
+        console.log("⚠️ Already paid:", businessCardPaymentId);
         return res.json({ status: "ok" });
       }
-      
-      // Update payment status
-      userPayment.status = "paid";
-      userPayment.paidAt = new Date();
-      userPayment.transactionId = payment.id;
-      await userPayment.save();
-      
-      console.log("✅ User payment confirmed via webhook:", {
-        id: userPayment._id,
-        userId: userPayment.userId,
-        itemName: userPayment.itemName,
-        amount: userPayment.amount,
-        transactionId: payment.id
+
+      cardPayment.status = "paid";
+      cardPayment.paidAt = new Date();
+      cardPayment.transactionId = payment.id;
+      await cardPayment.save();
+
+      console.log("✅ Business card payment confirmed:", {
+        id: cardPayment._id,
+        userId: cardPayment.userId,
+        amount: cardPayment.amount,
+        transactionId: payment.id,
       });
     }
 
     res.json({ status: "ok" });
+
   } catch (err) {
-    console.error("❌ Razorpay webhook failed:", err);
+    console.error("❌ BusinessCard webhook failed:", err);
     res.status(500).send("Webhook error");
   }
 });
@@ -350,20 +430,17 @@ app.set("io", io);
 // Socket.IO for chat
 // ------------------------
 io.on('connection', (socket) => {
-  console.log(`🟢 Socket connected: ${socket.id} at ${new Date().toISOString()}`);
 
   // Log when socket joins a room
   socket.on('joinRoom', ({ senderId, receiverId }) => {
     const roomId = `${senderId}_${receiverId}`;
     socket.join(roomId);
-    console.log(`✅ Socket ${socket.id} joined room: ${roomId} at ${new Date().toISOString()}`);
   });
 
   // Log when socket leaves a room
   socket.on('leaveRoom', ({ senderId, receiverId }) => {
     const roomId = `${senderId}_${receiverId}`;
     socket.leave(roomId);
-    console.log(`❌ Socket ${socket.id} left room: ${roomId} at ${new Date().toISOString()}`);
   });
 
   // Handle sending messages
@@ -387,15 +464,15 @@ io.on('connection', (socket) => {
       io.to(roomId).emit('receiveMessage', savedMessage);
 
       // 🔹 Log everything
-      console.log('📤 [Socket] Message emitted:', {
-        roomId,
-        socketId: socket.id,
-        senderId,
-        receiverId,
-        message: savedMessage.message,
-        images: savedMessage.images,
-        timestamp: savedMessage.timestamp.toISOString()
-      });
+      // console.log('📤 [Socket] Message emitted:', {
+      //   roomId,
+      //   socketId: socket.id,
+      //   senderId,
+      //   receiverId,
+      //   message: savedMessage.message,
+      //   images: savedMessage.images,
+      //   timestamp: savedMessage.timestamp.toISOString()
+      // });
 
     } catch (err) {
       console.error('❌ Error in sendMessage:', err);
@@ -404,12 +481,12 @@ io.on('connection', (socket) => {
 
   // Log socket disconnection
   socket.on('disconnect', (reason) => {
-    console.log(`🔴 Socket disconnected: ${socket.id} at ${new Date().toISOString()} | Reason: ${reason}`);
+    //console.log(`🔴 Socket disconnected: ${socket.id} at ${new Date().toISOString()} | Reason: ${reason}`);
   });
 
   // Optional: Log any other events for debugging
   socket.onAny((event, ...args) => {
-    console.log(`📌 Socket event received: ${event} | Data:`, args);
+    //console.log(`📌 Socket event received: ${event} | Data:`, args);
   });
 });
 
@@ -423,9 +500,4 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`📌 Network access: http://31.97.206.144:${PORT}`);
   console.log(`📌 Open http://localhost:${PORT}/index.html to access the UI`);
 
-  console.log('📊 All cron jobs scheduled:');
-  console.log('   - Birthday/Anniversary: 12:00 AM');
-  console.log('   - Daily Greetings: 9:00 AM');
-  console.log('   - Trial Expiry: 12:05 AM (based on createdAt)');
-  console.log('✅ Server startup complete at:', new Date().toISOString());
 });

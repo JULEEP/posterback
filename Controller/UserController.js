@@ -47,11 +47,20 @@ import { exec } from "child_process";
 import WalletConfig from '../Models/WalletConfig.js';
 import BusinessCard from '../Models/BusinessCard.js';
 import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas';
-import { PDFDocument } from 'pdf-lib';
-import UserPayments from '../Models/UserPayments.js';
+import { PDFName, PDFString, PDFArray, PDFDict } from 'pdf-lib';
+import { PDFDocument, rgb } from 'pdf-lib';
 
+import UserPayments from '../Models/UserPayments.js';
+import fs from 'fs'
+import BusinessCardPayment from '../Models/BusinessCardPayment.js';
+
+import { fileURLToPath } from "url";
 
 dayjs.extend(customParseFormat);
+
+// current file ka path
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const parseFlexibleDate = (dateString) => {
   if (!dateString) return null;
@@ -5355,82 +5364,6 @@ export const getUserBusinessCards = async (req, res) => {
 };
 
 
-const convertImageToPDF = async (imageUrl) => {
-  try {
-    if (!imageUrl) {
-      console.warn('No image URL provided for PDF conversion');
-      return null;
-    }
-
-    // 1. Image fetch karo
-    const imageBuffer = await fetchImageBuffer(imageUrl);
-    
-    // 2. PDF document create karo
-    const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage();
-    
-    // 3. Image load karo (PNG ya JPG)
-    let image;
-    try {
-      image = await pdfDoc.embedPng(imageBuffer);
-    } catch (err) {
-      try {
-        image = await pdfDoc.embedJpg(imageBuffer);
-      } catch (jpgErr) {
-        console.error('Failed to embed image:', jpgErr.message);
-        return null;
-      }
-    }
-    
-    // 4. Image dimensions lo
-    const { width, height } = image.scale(1);
-    
-    // 5. Page size set karo image ke according
-    page.setSize(width, height);
-    
-    // 6. Image draw karo
-    page.drawImage(image, {
-      x: 0,
-      y: 0,
-      width: width,
-      height: height,
-    });
-    
-    // 7. PDF buffer generate karo
-    const pdfBuffer = await pdfDoc.save();
-    
-    // 8. Cloudinary pe PDF upload karo
-    const uploadResult = await new Promise((resolve, reject) => {
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          folder: 'business-cards/pdfs',
-          resource_type: 'auto',  // 'auto' se Cloudinary automatically detect karega
-          public_id: `business_card_${Date.now()}`,  // .pdf mat lagao, Cloudinary auto add karega
-          format: 'pdf',  // format specify kar do
-          overwrite: true,
-        },
-        (error, result) => {
-          if (error) {
-            console.error('Cloudinary upload error:', error);
-            reject(error);
-          } else {
-            resolve(result);
-          }
-        }
-      );
-      uploadStream.end(pdfBuffer);
-    });
-    
-    // 9. Secure URL return karo (bina fl_attachment ke, browser me open hogi)
-    // Cloudinary automatically .pdf extension add kar dega
-    return uploadResult.secure_url;
-    
-  } catch (error) {
-    console.error('Error converting image to PDF:', error.message);
-    return null;
-  }
-};
-
 // export const getSingleBusinessCard = async (req, res) => {
 //    try {
 //     const { userId, businessCardId } = req.params;
@@ -5667,34 +5600,34 @@ export const getSingleBusinessCard = async (req, res) => {
       };
     });
 
-    const templateImageUrl = template.templateImage || '';
-    let overlaidImageUrl = '';
-    if (templateImageUrl) {
-      overlaidImageUrl = await overlayTextOnTemplate(
-        templateImageUrl,
-        overlayTextStyles,
-        userCard.logo || '',
-        overlayLogoSettings,
-        mergedSocialLinks
-      );
-    }
+   const templateImageUrl = template.templateImage || '';
+let overlaidImageUrl = '';
+if (templateImageUrl) {
+  overlaidImageUrl = await overlayTextOnTemplate(
+    templateImageUrl,
+    overlayTextStyles,
+    userCard.logo || '',
+    overlayLogoSettings,
+    mergedSocialLinks
+  );
+}
 
-    let pdfUrl = '';
-    if (overlaidImageUrl) {
-      pdfUrl = await convertImageToPDF(overlaidImageUrl);
-    }
+let pdfUrl = '';
+if (overlaidImageUrl) {
+  // Pass overlayTextStyles and mergedSocialLinks for positioning
+  pdfUrl = await convertImageToPDFLocal(overlaidImageUrl, userCard, overlayTextStyles);
+}
 
-    // ✅ Array ko object me convert karke response
-    const processedCard = {
-      overlaidImage: overlaidImageUrl || '',
-      overlaidPdf: pdfUrl || '',
-      templateId: template._id,
-    };
+const processedCard = {
+  overlaidImage: overlaidImageUrl || '',
+  overlaidPdf: pdfUrl || '',  // local path
+  templateId: template._id,
+};
 
-    res.status(200).json({
-      success: true,
-      data: processedCard,
-    });
+res.status(200).json({
+  success: true,
+  data: processedCard,
+});
 
   } catch (error) {
     console.error('Error fetching user business card:', error);
@@ -5703,6 +5636,134 @@ export const getSingleBusinessCard = async (req, res) => {
       message: 'Error fetching business card',
       error: error.message,
     });
+  }
+};
+
+
+
+// Helper to check if string is a URL
+const isURL = (str) => /^https?:\/\//i.test(str);
+
+export const convertImageToPDFLocal = async (imageUrl, userCard, overlayTextStyles) => {
+  try {
+    if (!imageUrl) return null;
+
+    const response = await fetch(imageUrl);
+    const imageBuffer = await response.arrayBuffer();
+
+    const pdfDoc = await PDFDocument.create();
+
+    let bgImage;
+    try {
+      bgImage = await pdfDoc.embedPng(imageBuffer);
+    } catch {
+      bgImage = await pdfDoc.embedJpg(imageBuffer);
+    }
+
+    const { width, height } = bgImage.scale(1);
+    const page = pdfDoc.addPage([width, height]);
+    page.drawImage(bgImage, { x: 0, y: 0, width, height });
+
+    // ─────────────────────────────────────────────
+    // Helper: Proper clickable annotation
+    // ─────────────────────────────────────────────
+    const addLinkAnnotation = (x, imgY, w, h, url) => {
+      try {
+        const pdfY = height - imgY - h; // flip y
+
+        const linkAnnotation = pdfDoc.context.obj({
+          Type: 'Annot',
+          Subtype: 'Link',
+          Rect: pdfDoc.context.obj([x, pdfY, x + w, pdfY + h]),
+          Border: pdfDoc.context.obj([0, 0, 0]),
+          F: 4,       // print + download ke baad bhi active
+          H: 'I',     // highlight on click
+          A: pdfDoc.context.obj({
+            Type: 'Action',
+            S: 'URI',
+            URI: PDFString.of(url),
+          }),
+        });
+
+        const ref = pdfDoc.context.register(linkAnnotation);
+        const existingAnnots = page.node.get(PDFName.of('Annots'));
+        if (existingAnnots) {
+          existingAnnots.push(ref);
+        } else {
+          page.node.set(PDFName.of('Annots'), pdfDoc.context.obj([ref]));
+        }
+      } catch (e) {
+        console.warn('Annotation failed:', e.message);
+      }
+    };
+
+    // Email
+    if (userCard.email && overlayTextStyles?.email) {
+      const s = overlayTextStyles.email;
+      const w = s.fontSize * userCard.email.length * 0.6;
+      const h = s.fontSize + 4;
+      addLinkAnnotation(s.x, s.y, w, h, `mailto:${userCard.email}`);
+    }
+
+    // Phone
+    if (userCard.phone && overlayTextStyles?.phone) {
+      const s = overlayTextStyles.phone;
+      const w = s.fontSize * userCard.phone.length * 0.6;
+      const h = s.fontSize + 4;
+      addLinkAnnotation(s.x, s.y, w, h, `tel:${userCard.phone}`);
+    }
+
+    // Website
+    if (userCard.website && overlayTextStyles?.website) {
+      const s = overlayTextStyles.website;
+      const w = s.fontSize * userCard.website.length * 0.6;
+      const h = s.fontSize + 4;
+      const websiteUrl = isURL(userCard.website)
+        ? userCard.website
+        : `https://${userCard.website}`;
+      addLinkAnnotation(s.x, s.y, w, h, websiteUrl);
+    }
+
+    // Social Links — icon + url text dono clickable
+    const socialLinks = userCard.socialLinks || [];
+    socialLinks.forEach((social) => {
+      if (!social.url || social.x == null || social.y == null) return;
+      const iconSize = social.iconSize || 30;
+      const socialUrl = isURL(social.url) ? social.url : `https://${social.url}`;
+
+      // Icon area clickable
+      addLinkAnnotation(social.x, social.y, iconSize, iconSize, socialUrl);
+
+      // URL text bhi clickable
+      if (social.showUrl && social.url) {
+        const urlFontSize = social.urlFontSize || 12;
+        const urlTextWidth = urlFontSize * social.url.length * 0.6;
+        addLinkAnnotation(
+          social.x + iconSize + 8,
+          social.y,
+          urlTextWidth,
+          urlFontSize + 4,
+          socialUrl
+        );
+      }
+    });
+
+    // ✅ useObjectStreams: false — download ke baad bhi links kaam karenge
+    const pdfBytes = await pdfDoc.save({ useObjectStreams: false });
+
+    const pdfFolder = path.join(process.cwd(), 'uploads/pdfs');
+    if (!fs.existsSync(pdfFolder)) fs.mkdirSync(pdfFolder, { recursive: true });
+
+    const pdfFileName = `business_card_${Date.now()}.pdf`;
+    const pdfPath = path.join(pdfFolder, pdfFileName);
+    fs.writeFileSync(pdfPath, pdfBytes);
+
+    const BASE_URL = 'https://api.editezy.com';
+
+return `${BASE_URL}/uploads/pdfs/${pdfFileName}`;
+  } catch (err) {
+    console.error('PDF conversion failed:', err);
+    return null;
   }
 };
 
@@ -5717,13 +5778,10 @@ export const createUserPayment = async (req, res) => {
   try {
     const { userId } = req.params;
     const { itemName, itemId, amount } = req.body;
-    
-    // File from form-data
-    const file = req.files?.media; // assuming field name is 'media'
 
-   
+    const file = req.files?.media;
 
-    // Check if file is provided
+    // 🔹 file check
     if (!file) {
       return res.status(400).json({
         success: false,
@@ -5731,75 +5789,144 @@ export const createUserPayment = async (req, res) => {
       });
     }
 
+    // 🔹 user check
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
     }
 
-    // Check if item exists in DB
+    // 🔥 reels removed from switch
     let itemExists;
     let folderName;
+
     switch (itemName.toLowerCase()) {
       case "poster":
         itemExists = await Poster.exists({ _id: itemId });
         folderName = "poster-payments";
         break;
-      case "reels":
-        itemExists = await Reel.exists({ _id: itemId });
-        folderName = "reels-payments";
-        break;
+
       case "sticker":
         itemExists = await Sticker.exists({ _id: itemId });
         folderName = "sticker-payments";
         break;
+
       case "logo":
         itemExists = await Logo.exists({ _id: itemId });
         folderName = "logo-payments";
         break;
+
       default:
-        return res.status(400).json({ success: false, message: "Invalid itemName" });
+        return res.status(400).json({
+          success: false,
+          message: "Invalid itemName",
+        });
     }
 
+    // 🔹 item check
     if (!itemExists) {
-      return res.status(404).json({ success: false, message: `${itemName} item not found` });
+      return res.status(404).json({
+        success: false,
+        message: `${itemName} item not found`,
+      });
     }
 
-    // Determine media type
-    const mediaType = file.mimetype.startsWith("image/") ? "image" : "video";
+    // 🔹 Validate file type
+    const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    const allowedVideoTypes = ['video/mp4', 'video/mov', 'video/avi', 'video/mkv'];
     
-    // Upload to Cloudinary
+    let mediaType;
+    if (allowedImageTypes.includes(file.mimetype)) {
+      mediaType = "image";
+    } else if (allowedVideoTypes.includes(file.mimetype)) {
+      mediaType = "video";
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid file type. Allowed: JPEG, PNG, GIF, WEBP for images; MP4, MOV, AVI, MKV for videos",
+      });
+    }
+
+    // 🔹 Check file size (limit to 50MB for videos, 10MB for images)
+    const maxSize = mediaType === "video" ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      return res.status(400).json({
+        success: false,
+        message: `File too large. Maximum size: ${mediaType === "video" ? "50MB" : "10MB"}`,
+      });
+    }
+
     let cloudinaryResult;
+
     try {
-      cloudinaryResult = await cloudinary.uploader.upload(file.tempFilePath, {
+      // 🔹 Read file as buffer for better compatibility
+      const fileBuffer = fs.readFileSync(file.tempFilePath);
+      
+      // 🔹 For images, convert to base64 for Cloudinary
+      const base64File = `data:${file.mimetype};base64,${fileBuffer.toString('base64')}`;
+      
+      // Upload to Cloudinary with proper format
+      cloudinaryResult = await cloudinary.uploader.upload(base64File, {
         folder: folderName,
         resource_type: mediaType === "video" ? "video" : "image",
+        // Force format for images to ensure compatibility
+        ...(mediaType === "image" && { format: 'jpg' }), // Convert to JPG for consistency
+        // Add transformation for better compatibility
+        transformation: mediaType === "image" ? [
+          { quality: "auto" },
+          { fetch_format: "auto" }
+        ] : [],
       });
-      
-      // Delete temp file
-      fs.unlinkSync(file.tempFilePath);
+
+      // 🔹 delete temp file
+      if (fs.existsSync(file.tempFilePath)) {
+        fs.unlinkSync(file.tempFilePath);
+      }
+
     } catch (uploadError) {
       console.error("Cloudinary upload error:", uploadError);
+      
+      // 🔹 Clean up temp file if exists
+      if (file.tempFilePath && fs.existsSync(file.tempFilePath)) {
+        try {
+          fs.unlinkSync(file.tempFilePath);
+        } catch (unlinkError) {
+          console.error("Error deleting temp file:", unlinkError);
+        }
+      }
+      
+      // 🔹 More detailed error message
+      let errorMessage = "Failed to upload media to Cloudinary";
+      if (uploadError.http_code === 400) {
+        errorMessage = "Unsupported file format. Please try a different file.";
+      } else if (uploadError.http_code === 413) {
+        errorMessage = "File too large for Cloudinary.";
+      }
+      
       return res.status(500).json({
         success: false,
-        message: "Failed to upload media",
+        message: errorMessage,
         error: uploadError.message,
       });
     }
 
-    // Create payment record with media URL
+    // 🔹 create payment
     const payment = await UserPayments.create({
       userId,
       itemName: itemName.toLowerCase(),
       itemId,
       amount,
       mediaUrl: cloudinaryResult.secure_url,
-      mediaType: mediaType,
+      mediaType,
       status: "pending",
       paidAt: null,
       transactionId: null,
+      publicId: cloudinaryResult.public_id, // Store public ID for later deletion if needed
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: `${itemName} payment initiated (Pending confirmation)`,
       payment: {
@@ -5808,74 +5935,61 @@ export const createUserPayment = async (req, res) => {
         amount: payment.amount,
         mediaUrl: payment.mediaUrl,
         status: payment.status,
+        mediaType: payment.mediaType,
       },
     });
 
   } catch (error) {
     console.error("UserPayment Error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Error creating payment",
       error: error.message,
     });
   }
 };
-
 export const getUserPaymentsByUserId = async (req, res) => {
   try {
     const { userId } = req.params;
 
     if (!userId) {
-      return res.status(400).json({ success: false, message: "userId is required" });
+      return res.status(400).json({
+        success: false,
+        message: "userId is required",
+      });
     }
 
-    const payments = await UserPayments.find({ userId })
+    // 🔹 Only paid payments
+    const payments = await UserPayments.find({
+      userId,
+      status: "paid"
+    })
       .sort({ paidAt: -1 })
       .lean();
 
-    // 🔥 Populate item details dynamically
-    const populatedPayments = await Promise.all(
-      payments.map(async (p) => {
-        let itemDetails = null;
+    // 🔹 Message handling
+    let message = "";
+    if (!payments.length) {
+      message = "No paid payment data available";
+    } else {
+      message = `Paid payments for user ${userId} fetched successfully`;
+    }
 
-        switch (p.itemName.toLowerCase()) {
-          case "poster":
-            itemDetails = await Poster.findById(p.itemId).lean();
-            break;
-          case "reels":
-            itemDetails = await Reel.findById(p.itemId).lean();
-            break;
-          case "sticker":
-            itemDetails = await Sticker.findById(p.itemId).lean();
-            break;
-          case "logo":
-            itemDetails = await Logo.findById(p.itemId).lean();
-            break;
-        }
-
-        return {
-          ...p,
-          itemDetails, // populate item details here
-        };
-      })
-    );
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: `Payments for user ${userId} fetched successfully`,
-      data: populatedPayments,
+      message,
+      data: payments,
     });
 
   } catch (error) {
     console.error("Get UserPayments Error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Error fetching user payments",
       error: error.message,
     });
   }
 };
-
 
 export const getAllUserPaymentsAdmin = async (req, res) => {
   try {
@@ -5926,6 +6040,114 @@ export const getAllUserPaymentsAdmin = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching all user payments",
+      error: error.message,
+    });
+  }
+};
+
+
+
+export const createBusinessCardPayment = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { businessCardId, amount } = req.body;
+
+    if (!userId || !businessCardId || !amount) {
+      return res.status(400).json({
+        success: false,
+        message: "userId, businessCardId and amount are required",
+      });
+    }
+
+    const file = req.files?.media;
+    if (!file) {
+      return res.status(400).json({
+        success: false,
+        message: "Image file is required",
+      });
+    }
+
+    if (!file.mimetype.startsWith("image/")) {
+      return res.status(400).json({
+        success: false,
+        message: "Only image files are allowed",
+      });
+    }
+
+    // 🔹 Check user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    // 🔹 Check business card template
+    const template = await BusinessCard.findById(businessCardId);
+    if (!template) {
+      return res.status(404).json({ success: false, message: "Business card template not found" });
+    }
+
+    // 🔹 Upload image + PDF to Cloudinary (parallel)
+    let cloudinaryResult;
+    let pdfCloudinaryResult = null;
+
+    try {
+      // Image upload
+      cloudinaryResult = await cloudinary.uploader.upload(file.tempFilePath, {
+        folder: "business-card-payments",
+        resource_type: "image",
+      });
+      fs.unlinkSync(file.tempFilePath);
+
+      // PDF upload (optional)
+      if (req.files?.pdf) {
+        const pdfFile = req.files.pdf;
+        pdfCloudinaryResult = await cloudinary.uploader.upload(pdfFile.tempFilePath, {
+          folder: "business-card-payments/pdfs",
+          resource_type: "raw",
+        });
+        fs.unlinkSync(pdfFile.tempFilePath);
+      }
+
+    } catch (err) {
+      console.error("Cloudinary upload error:", err);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload file",
+        error: err.message,
+      });
+    }
+
+    // 🔹 Create payment record
+    const payment = await BusinessCardPayment.create({
+      userId,
+      businessCardId,
+      mediaUrl: cloudinaryResult.secure_url,
+      pdfUrl: pdfCloudinaryResult?.secure_url || null,
+      mediaType: "image",
+      amount,
+      status: "pending",
+      paidAt: null,
+      transactionId: null,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Business card payment initiated (Pending confirmation)",
+      payment: {
+        _id: payment._id,
+        businessCardId: payment.businessCardId,
+        amount: payment.amount,
+        mediaUrl: payment.mediaUrl,
+        pdfUrl: payment.pdfUrl || null,
+        status: payment.status,
+      },
+    });
+
+  } catch (error) {
+    console.error("BusinessCardPayment Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error creating business card payment",
       error: error.message,
     });
   }

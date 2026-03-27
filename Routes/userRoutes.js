@@ -64,7 +64,8 @@ import {
      getTodayReward,
      createUserPayment,
      getUserPaymentsByUserId,
-     getAllUserPaymentsAdmin
+     getAllUserPaymentsAdmin,
+     createBusinessCardPayment
     } from '../Controller/UserController.js'; // Import UserController
 import uploads from '../config/uploadConfig.js';
 const router = express.Router();
@@ -154,6 +155,8 @@ router.get("/getsinglebusinesscards/:userId/:businessCardId", getSingleBusinessC
 router.post("/payfordownloads/:userId", createUserPayment);
 router.get("/mypaymentshistory/:userId", getUserPaymentsByUserId);
 router.get("/getalluserpayments", getAllUserPaymentsAdmin);
+router.post("/purchasebusiensscards/:userId", createBusinessCardPayment);
+
 
 
 

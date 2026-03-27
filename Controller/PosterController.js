@@ -1177,83 +1177,64 @@ export const deleteBanner = async (req, res) => {
 export const getWeeklyPosters = async (req, res) => {
   try {
     const { userId } = req.params;
-    let lang = "en";
-
-    // 🔹 user language
-    if (userId) {
-      const user = await User.findById(userId).select("language").lean();
-      if (user) lang = user.language || "en";
-    }
-
-    // 🔹 fetch posters (lean = fast)
-    const posters = await Poster.find()
-      .select("name categoryName posterImage designData description posterlang size festivalDate inStock tags title createdAt updatedAt")
-      .sort({ categoryName: 1 })
-      .lean();
-
-    if (!posters.length) return res.status(200).json({});
-
-    // 🔹 today
     const today = moment().format("dddd");
     const todayLower = today.toLowerCase();
 
+    // 🔹 Dono queries parallel chalao
+    const [user, posters] = await Promise.all([
+      userId
+        ? User.findById(userId).select("language").lean()
+        : Promise.resolve(null),
+      Poster.find({ categoryName: new RegExp(`^${todayLower}$`, "i") }) // 👈 sirf aaj ke posters fetch karo — sab nahi
+        .select("name categoryName posterImage designData description posterlang size festivalDate inStock tags title createdAt updatedAt")
+        .lean(),
+    ]);
+
+    if (!posters.length) return res.status(200).json({});
+
+    const lang = user?.language || "en";
+
+    // 🔹 Translation sirf tab jab lang === "hi"
     let translationMap = {};
-
-    // 🔹 translation (same logic)
-    if (lang === "hi") {
+    if (lang === "hi" && posters.length > 0) {
       const uniqueTexts = new Set();
-
-      posters.forEach(p => {
+      posters.forEach((p) => {
         if (p.categoryName) uniqueTexts.add(p.categoryName);
         if (p.name) uniqueTexts.add(p.name);
       });
-
-      const textsArray = Array.from(uniqueTexts);
-
-      if (textsArray.length > 0) {
-        translationMap = await translateToHindiBulk(textsArray);
-      }
+      translationMap = await translateToHindiBulk(Array.from(uniqueTexts));
     }
 
-    // 🔹 filter + SAME RESPONSE STRUCTURE
-    const todayPosters = posters
-      .filter(p => p.categoryName && p.categoryName.toLowerCase().trim() === todayLower)
-      .map(obj => {
+    // 🔹 Map karo
+    const todayPosters = posters.map((obj) => {
+      if (lang === "hi") {
+        if (obj.categoryName)
+          obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
+        if (obj.name)
+          obj.name = translationMap[obj.name] || obj.name;
+      }
+      const designData = obj.designData || {};
+      return {
+        ...obj,
+        designData: {
+          bgImage: designData.bgImage || null,
+          overlayImages: designData.overlayImages || [],
+        },
+        images: obj.posterImage?.url ? [obj.posterImage.url] : [],
+      };
+    });
 
-        // translation
-        if (lang === "hi") {
-          if (obj.categoryName)
-            obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
-
-          if (obj.name)
-            obj.name = translationMap[obj.name] || obj.name;
-        }
-
-        const designData = obj.designData || {};
-
-        return {
-          ...obj,
-          designData: {
-            bgImage: designData.bgImage || null,
-            overlayImages: designData.overlayImages || []
-          },
-          images: obj.posterImage?.url ? [obj.posterImage.url] : []
-        };
-      });
-
-    // 🔹 final response (same format)
     const response = {};
     if (todayPosters.length) {
       response[today] = todayPosters;
     }
 
     res.status(200).json(response);
-
   } catch (error) {
     console.error("Error fetching today's posters:", error);
     res.status(500).json({
       message: "Error fetching today's posters",
-      error: error.message
+      error: error.message,
     });
   }
 };

@@ -21,6 +21,6 @@ export const sendPushNotification = async ({
     await admin.messaging().send(message);
     console.log("✅ Push sent:", title);
   } catch (err) {
-    console.error("❌ FCM Error:", err.message);
+    //console.error("❌ FCM Error:", err.message);
   }
 };
