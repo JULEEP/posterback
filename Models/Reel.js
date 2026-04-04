@@ -12,6 +12,10 @@ const reelSchema = new mongoose.Schema({
       type: Boolean,
       default: false,
     },
+      thumbnailUrl: {
+    type: String,
+    default: null,
+  },
   isLiked: {
     type: Boolean,
     default: false,

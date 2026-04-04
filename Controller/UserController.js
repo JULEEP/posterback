@@ -56,7 +56,10 @@ import BusinessCardPayment from '../Models/BusinessCardPayment.js';
 
 import { fileURLToPath } from "url";
 
+
 dayjs.extend(customParseFormat);
+
+
 
 // current file ka path
 const __filename = fileURLToPath(import.meta.url);
@@ -282,7 +285,7 @@ export const registerUser = async (req, res) => {
 
 // Direct Twilio credentials
 const TWILIO_SID = 'ACd37d269a71fda78661c1fd2a54a5b567';
-const TWILIO_AUTH_TOKEN = '06dc6986bc923184ef0cfa8824485bb2';
+const TWILIO_AUTH_TOKEN = '66ee7cfe709501907323b309a7c80436';
 const TWILIO_PHONE = '+16193309459'; // Your Twilio phone number
 
 
@@ -324,7 +327,6 @@ const checkAndExpireTrial = async (user) => {
 export const loginUser = async (req, res) => {
   const { mobile } = req.body;
   
-  // Language can also be passed in request body for new users
   const preferredLanguage = req.body.language || 'en';
   
   if (!mobile) {
@@ -340,8 +342,25 @@ export const loginUser = async (req, res) => {
     const staticOtpNumbers = ['9744037599', '9849008143'];
     const otp = staticOtpNumbers.includes(mobile) ? '1234' : generateOTP();
 
+  // 🔥 TWILIO SMS SEND (ONLY NON-STATIC NUMBERS)
+if (!staticOtpNumbers.includes(mobile)) {
+  try {
+    await client.messages.create({
+      body: `🔐 Login OTP: ${otp}
+
+This OTP is valid for 1 minute. Please do not share it with anyone.
+
+Regards,  
+EDITEZY Team`,
+      from: TWILIO_PHONE,
+      to: `+91${mobile}`
+    });
+  } catch (err) {
+    console.error('Twilio Error:', err.message);
+  }
+}
+
     if (user) {
-      // 🔥 AUTO-EXPIRE TRIAL LOGIC
       if (
         user.free7DayTrial === true &&
         user.trialExpiryDate &&
@@ -354,10 +373,8 @@ export const loginUser = async (req, res) => {
       user.otpExpiry = new Date(Date.now() + 60 * 1000);
       await user.save();
 
-      // Check user's language preference
       const userLanguage = user.language || 'en';
       
-      // Translate name if language is Hindi
       let displayName = user.name || null;
       if (userLanguage === 'hi' && displayName) {
         displayName = await translateToHindi(displayName);
@@ -372,7 +389,7 @@ export const loginUser = async (req, res) => {
         otp,
         user: {
           _id: user._id,
-          name: displayName, // Translated name if Hindi user
+          name: displayName,
           email: user.email || null,
           mobile: user.mobile,
           wallet: user.wallet || 0,
@@ -380,12 +397,11 @@ export const loginUser = async (req, res) => {
           isSubscribedPlan: user.isSubscribedPlan || false,
           free7DayTrial: user.free7DayTrial,
           trialExpiryDate: user.trialExpiryDate,
-          language: user.language || 'en' // Include language preference
+          language: user.language || 'en'
         }
       });
 
     } else {
-      // New user - create with preferred language
       const trialExpiryDate = moment().add(7, 'days').toDate();
 
       user = new User({
@@ -394,8 +410,9 @@ export const loginUser = async (req, res) => {
         otpExpiry: new Date(Date.now() + 60 * 1000),
         free7DayTrial: true,
         trialExpiryDate,
-        language: preferredLanguage // Save preferred language for new user
+        language: preferredLanguage
       });
+
       await user.save();
 
       const message = preferredLanguage === 'hi'
@@ -410,7 +427,7 @@ export const loginUser = async (req, res) => {
           mobile: user.mobile,
           free7DayTrial: true,
           trialExpiryDate,
-          language: user.language // Include language preference
+          language: user.language
         }
       });
     }
@@ -425,8 +442,6 @@ export const loginUser = async (req, res) => {
     res.status(500).json({ message: errorMsg });
   }
 };
-
-// Resend OTP function (optional, if user requests to resend OTP)
 export const resendOTP = async (req, res) => {
   const { mobile } = req.body;
 
@@ -437,22 +452,38 @@ export const resendOTP = async (req, res) => {
       return res.status(404).json({ message: "User not found." });
     }
 
-    // Static OTP for specific numbers
     const staticOtpNumbers = ['9744037599', '9849008143'];
     let otp;
 
-    // Check if mobile number is in the static list
     if (staticOtpNumbers.includes(mobile)) {
-      otp = '1234'; // Static OTP for specified numbers
+      otp = '1234';
     } else {
-      otp = generateOTP(); // Random OTP for other numbers
+      otp = generateOTP();
     }
 
-    const otpExpiry = new Date(Date.now() + 30 * 1000); // OTP expiry time (30 seconds)
+    const otpExpiry = new Date(Date.now() + 30 * 1000);
 
     user.otp = otp;
     user.otpExpiry = otpExpiry;
     await user.save();
+
+    // 🔥 TWILIO SMS SEND (ONLY NON-STATIC NUMBERS)
+    if (!staticOtpNumbers.includes(mobile)) {
+      try {
+        await client.messages.create({
+          body: `🔐 OTP Resent: ${otp}
+
+This OTP is valid for 30 seconds. Please do not share it with anyone.
+
+Regards,  
+EDITEZY Team`,
+          from: TWILIO_PHONE,
+          to: `+91${mobile}`
+        });
+      } catch (err) {
+        console.error('Twilio Error:', err.message);
+      }
+    }
 
     const userResponse = user.toObject();
     delete userResponse.otp;
@@ -460,7 +491,7 @@ export const resendOTP = async (req, res) => {
 
     res.status(200).json({
       message: "OTP resent successfully.",
-      otp: otp, // Returning OTP directly (for testing)
+      otp: otp,
       user: userResponse
     });
 

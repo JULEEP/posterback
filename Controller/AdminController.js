@@ -1224,16 +1224,17 @@ export const deleteLogoCategory = async (req, res) => {
 
 export const createReel = async (req, res) => {
   try {
-    // ✅ Check if video is provided
+    // Check if video is provided
     if (!req.files || !req.files.video) {
       return res.status(400).json({ message: "Reel video is required." });
     }
 
-    const { hotTop } = req.body; // get hotTop from request
-    const file = req.files.video;
+    const { hotTop } = req.body;
+    const videoFile = req.files.video;
+    const thumbnailFile = req.files.thumbnail; // Optional thumbnail
 
-    // ✅ Upload video to Cloudinary with overlay
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
+    // Upload video to Cloudinary with overlay
+    const videoResult = await cloudinary.uploader.upload(videoFile.tempFilePath, {
       folder: "reels-videos",
       resource_type: "video",
       transformation: [
@@ -1253,9 +1254,21 @@ export const createReel = async (req, res) => {
       ],
     });
 
-    // ✅ Create Reel document
+    let thumbnailUrl = null;
+    
+    // Upload thumbnail if provided
+    if (thumbnailFile) {
+      const thumbnailResult = await cloudinary.uploader.upload(thumbnailFile.tempFilePath, {
+        folder: "reels-thumbnails",
+        resource_type: "image",
+      });
+      thumbnailUrl = thumbnailResult.secure_url;
+    }
+
+    // Create Reel document
     const newReel = new Reel({
-      videoUrl: result.secure_url,
+      videoUrl: videoResult.secure_url,
+      thumbnailUrl: thumbnailUrl, // Will be null if not provided
       likeCount: 0,
       isLiked: false,
       hotTop: hotTop === "true" || hotTop === true,
@@ -1263,8 +1276,8 @@ export const createReel = async (req, res) => {
 
     const savedReel = await newReel.save();
 
-    // 🔔 Notify all users about the new reel
-    const allUsers = await User.find({}, "_id"); // get only user IDs
+    // Notify all users about the new reel
+    const allUsers = await User.find({}, "_id");
     const notifications = allUsers.map(user => ({
       userId: user._id,
       title: "New Reel Added",
@@ -1285,6 +1298,7 @@ export const createReel = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 
 export const getAllReels = async (req, res) => {
@@ -1311,25 +1325,18 @@ export const updateReel = async (req, res) => {
       return res.status(404).json({ message: "Reel not found" });
     }
 
-    // Agar naya video aaya hai
+    // Handle video update
     if (req.files && req.files.video) {
-      const file = req.files.video;
+      const videoFile = req.files.video;
 
-      // 🔥 Old video delete from Cloudinary
+      // Delete old video from Cloudinary
       if (reel.videoUrl) {
-        const publicId = reel.videoUrl
-          .split("/")
-          .slice(-1)[0]
-          .split(".")[0];
-
-        await cloudinary.uploader.destroy(
-          `reels-videos/${publicId}`,
-          { resource_type: "video" }
-        );
+        const publicId = reel.videoUrl.split("/").slice(-1)[0].split(".")[0];
+        await cloudinary.uploader.destroy(`reels-videos/${publicId}`, { resource_type: "video" });
       }
 
-      // ⬆️ Upload new video
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
+      // Upload new video
+      const videoResult = await cloudinary.uploader.upload(videoFile.tempFilePath, {
         folder: "reels-videos",
         resource_type: "video",
         transformation: [
@@ -1349,7 +1356,26 @@ export const updateReel = async (req, res) => {
         ],
       });
 
-      reel.videoUrl = result.secure_url;
+      reel.videoUrl = videoResult.secure_url;
+    }
+
+    // Handle thumbnail update
+    if (req.files && req.files.thumbnail) {
+      const thumbnailFile = req.files.thumbnail;
+
+      // Delete old thumbnail from Cloudinary if it exists
+      if (reel.thumbnailUrl) {
+        const publicId = reel.thumbnailUrl.split("/").slice(-1)[0].split(".")[0];
+        await cloudinary.uploader.destroy(`reels-thumbnails/${publicId}`, { resource_type: "image" });
+      }
+
+      // Upload new thumbnail
+      const thumbnailResult = await cloudinary.uploader.upload(thumbnailFile.tempFilePath, {
+        folder: "reels-thumbnails",
+        resource_type: "image",
+      });
+
+      reel.thumbnailUrl = thumbnailResult.secure_url;
     }
 
     // Optional fields update
@@ -1361,7 +1387,6 @@ export const updateReel = async (req, res) => {
       reel.isLiked = req.body.isLiked;
     }
 
-    // ✅ Update hotTop field if provided
     if (req.body.hotTop !== undefined) {
       reel.hotTop = req.body.hotTop;
     }
@@ -1374,10 +1399,10 @@ export const updateReel = async (req, res) => {
     });
 
   } catch (error) {
+    console.error("Error updating reel:", error);
     res.status(500).json({ message: error.message });
   }
 };
-
 
 export const deleteReel = async (req, res) => {
   try {
