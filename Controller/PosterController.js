@@ -363,7 +363,16 @@ export const getAllPosters = async (req, res) => {
 
 export const getAllPostersForAdmin = async (req, res) => {
   try {
-    const posters = await Poster.find().sort({ createdAt: -1 });
+    const page = parseInt(req.query.page) || 1;
+    const limit = 10;
+    const skip = (page - 1) * limit;
+
+    const posters = await Poster.find()
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Poster.countDocuments();
 
     const formattedPosters = posters.map(poster => {
       const obj = poster.toObject();
@@ -375,7 +384,12 @@ export const getAllPostersForAdmin = async (req, res) => {
       };
     });
 
-    res.status(200).json(formattedPosters);
+    res.status(200).json({
+      data: formattedPosters,
+      currentPage: page,
+      totalPages: Math.ceil(total / limit),
+      totalItems: total,
+    });
 
   } catch (error) {
     console.error("Error fetching posters:", error);
@@ -385,7 +399,6 @@ export const getAllPostersForAdmin = async (req, res) => {
     });
   }
 };
-
 
 
 // ✅ Get posters by categoryName using query param
