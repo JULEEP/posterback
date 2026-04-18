@@ -909,52 +909,79 @@ export const createProfile = [
   },
 ];
 
-// Update Profile Image using express-fileupload and Cloudinary
-// Update Profile Image using express-fileupload and Cloudinary
 export const editProfile = async (req, res) => {
   try {
     const userId = req.params.id;
 
-    // Find the user
     const existingUser = await User.findById(userId);
+
     if (!existingUser) {
-      return res.status(404).json({ message: 'User not found!' });
+      return res.status(404).json({
+        success: false,
+        message: "User not found!"
+      });
+    }
+
+    const uploadDir = path.join(__dirname, "../uploads/profile_images");
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
     }
 
     let profileImageUrl = existingUser.profileImage;
 
-    // Check if profile image is uploaded
+    // 🖼️ update profile image
     if (req.files && req.files.profileImage) {
       const file = req.files.profileImage;
 
-      // Upload to Cloudinary using temp file
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: 'profile_images',
-      });
+      // delete old image (if local)
+      if (existingUser.profileImage) {
+        const oldPath = path.join(
+          __dirname,
+          "../uploads/profile_images",
+          existingUser.profileImage.split("/").pop()
+        );
 
-      profileImageUrl = result.secure_url;
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
 
-      // 🔴 No fs.unlinkSync — just skip cleanup
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+      const ext = path.extname(file.name);
+
+      const fileName = `profile_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      profileImageUrl = `https://api.editezy.com/uploads/profile_images/${fileName}`;
     }
 
-    // Save the new profile image
     existingUser.profileImage = profileImageUrl;
     await existingUser.save();
 
-    res.status(200).json({
-      message: 'Profile image updated successfully!',
+    return res.status(200).json({
+      success: true,
+      message: "Profile image updated successfully!",
       user: {
         id: existingUser._id,
-        profileImage: existingUser.profileImage,
-      },
+        profileImage: existingUser.profileImage
+      }
     });
 
   } catch (error) {
-    console.error('❌ Error updating profile:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error("❌ Error updating profile:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
-
 // Get Profile (with userId in params)
 export const getProfile = async (req, res) => {
   try {
@@ -1076,50 +1103,173 @@ export const checkUserBirthday = async (req, res) => {
 };
 
 
+// export const postStory = async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+//     const { caption } = req.body;
+
+//     if (!userId) {
+//       return res.status(400).json({ message: "User ID is required." });
+//     }
+
+//     // Normalize all uploaded files into an array
+//     const uploadedFiles = Object.values(req.files || {}).flat();
+
+//     if (uploadedFiles.length === 0) {
+//       return res.status(400).json({ message: "At least one media file (image, video, or audio) is required." });
+//     }
+
+//     const images = [];
+//     const videos = [];
+//     const audios = [];
+
+//     for (const file of uploadedFiles) {
+//       const fileType = file.mimetype.split('/')[0]; // image, video, audio
+
+//       // Upload directly to Cloudinary
+//       const result = await cloudinary.uploader.upload(file.tempFilePath, {
+//         resource_type: fileType,
+//         folder: "poster" // You can use "stories" if you prefer separating folders
+//       });
+
+//       // Categorize uploaded URLs
+//       if (fileType === 'image') images.push(result.secure_url);
+//       else if (fileType === 'video') videos.push(result.secure_url);
+//       else if (fileType === 'audio') audios.push(result.secure_url);
+//     }
+
+//     // Validate at least one valid media uploaded
+//     if (images.length === 0 && videos.length === 0 && audios.length === 0) {
+//       return res.status(400).json({ message: "Only image, video, or audio files are allowed." });
+//     }
+
+//     const expiredAt = new Date();
+//     expiredAt.setHours(expiredAt.getHours() + 24);
+
+//     // Save story to DB
+//     const newStory = new Story({
+//       user: userId,
+//       caption,
+//       images,
+//       videos,
+//       audios,
+//       expired_at: expiredAt
+//     });
+
+//     await newStory.save();
+
+//     // Push story ID to user
+//     await User.findByIdAndUpdate(userId, {
+//       $push: { myStories: newStory._id }
+//     });
+
+//     const user = await User.findById(userId);
+
+//     // Final response
+//     res.status(201).json({
+//       message: "Story posted successfully!",
+//       story: {
+//         _id: newStory._id,
+//         user: user._id,
+//         caption: newStory.caption,
+//         images: newStory.images,
+//         videos: newStory.videos,
+//         audios: newStory.audios,
+//         expired_at: newStory.expired_at,
+//         user_name: user.name || null,
+//         user_mobile: user.mobile || null
+//       }
+//     });
+//   } catch (error) {
+//     console.error("Error posting story:", error);
+//     res.status(500).json({ message: "Something went wrong!", error: error.message });
+//   }
+// };
+
+
 export const postStory = async (req, res) => {
   try {
     const { userId } = req.params;
     const { caption } = req.body;
 
     if (!userId) {
-      return res.status(400).json({ message: "User ID is required." });
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required"
+      });
     }
 
-    // Normalize all uploaded files into an array
     const uploadedFiles = Object.values(req.files || {}).flat();
 
     if (uploadedFiles.length === 0) {
-      return res.status(400).json({ message: "At least one media file (image, video, or audio) is required." });
+      return res.status(400).json({
+        success: false,
+        message: "At least one media file is required"
+      });
     }
+
+    const baseUrl = "https://api.editezy.com";
+
+    const uploadDir = path.join(__dirname, "../uploads/stories");
+
+    const imageDir = path.join(uploadDir, "images");
+    const videoDir = path.join(uploadDir, "videos");
+    const audioDir = path.join(uploadDir, "audios");
+
+    if (!fs.existsSync(imageDir)) fs.mkdirSync(imageDir, { recursive: true });
+    if (!fs.existsSync(videoDir)) fs.mkdirSync(videoDir, { recursive: true });
+    if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
 
     const images = [];
     const videos = [];
     const audios = [];
 
     for (const file of uploadedFiles) {
-      const fileType = file.mimetype.split('/')[0]; // image, video, audio
+      const fileType = file.mimetype.split("/")[0];
 
-      // Upload directly to Cloudinary
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        resource_type: fileType,
-        folder: "poster" // You can use "stories" if you prefer separating folders
-      });
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
 
-      // Categorize uploaded URLs
-      if (fileType === 'image') images.push(result.secure_url);
-      else if (fileType === 'video') videos.push(result.secure_url);
-      else if (fileType === 'audio') audios.push(result.secure_url);
+      const ext = path.extname(file.name);
+
+      let folderPath = "";
+      let urlBase = "";
+
+      if (fileType === "image") {
+        folderPath = imageDir;
+        urlBase = `${baseUrl}/uploads/stories/images`;
+      } else if (fileType === "video") {
+        folderPath = videoDir;
+        urlBase = `${baseUrl}/uploads/stories/videos`;
+      } else if (fileType === "audio") {
+        folderPath = audioDir;
+        urlBase = `${baseUrl}/uploads/stories/audios`;
+      } else {
+        continue;
+      }
+
+      const fileName = `${fileType}_${uniqueSuffix}${ext}`;
+      const filePath = path.join(folderPath, fileName);
+
+      await file.mv(filePath);
+
+      const fileUrl = `${urlBase}/${fileName}`;
+
+      if (fileType === "image") images.push(fileUrl);
+      else if (fileType === "video") videos.push(fileUrl);
+      else if (fileType === "audio") audios.push(fileUrl);
     }
 
-    // Validate at least one valid media uploaded
     if (images.length === 0 && videos.length === 0 && audios.length === 0) {
-      return res.status(400).json({ message: "Only image, video, or audio files are allowed." });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid media files"
+      });
     }
 
     const expiredAt = new Date();
     expiredAt.setHours(expiredAt.getHours() + 24);
 
-    // Save story to DB
     const newStory = new Story({
       user: userId,
       caption,
@@ -1131,16 +1281,15 @@ export const postStory = async (req, res) => {
 
     await newStory.save();
 
-    // Push story ID to user
     await User.findByIdAndUpdate(userId, {
       $push: { myStories: newStory._id }
     });
 
     const user = await User.findById(userId);
 
-    // Final response
-    res.status(201).json({
-      message: "Story posted successfully!",
+    return res.status(201).json({
+      success: true,
+      message: "Story posted successfully",
       story: {
         _id: newStory._id,
         user: user._id,
@@ -1153,12 +1302,17 @@ export const postStory = async (req, res) => {
         user_mobile: user.mobile || null
       }
     });
+
   } catch (error) {
-    console.error("Error posting story:", error);
-    res.status(500).json({ message: "Something went wrong!", error: error.message });
+    console.error("❌ Story Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+      error: error.message
+    });
   }
 };
-
 
 
 
@@ -2488,50 +2642,68 @@ export const requestWalletRedemption = async (req, res) => {
 
 
 
-// ✅ Save User History
 export const saveUserHistory = async (req, res) => {
   try {
     const { userId, logoId } = req.body;
 
     if (!userId || !logoId) {
       return res.status(400).json({
-        message: "userId and logoId are required",
+        success: false,
+        message: "userId and logoId are required"
       });
     }
 
     if (!req.files || !req.files.editedImage) {
       return res.status(400).json({
-        message: "Edited logo image is required",
+        success: false,
+        message: "Edited logo image is required"
       });
     }
 
     const file = req.files.editedImage;
 
-    // Upload edited image to Cloudinary
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: "user-edited-logos",
-    });
+    const uploadDir = path.join(__dirname, "../uploads/user-edited-logos");
 
-    const editedImage = result.secure_url;
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const uniqueSuffix =
+      Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+    const ext = path.extname(file.name);
+
+    const fileName = `edited_logo_${uniqueSuffix}${ext}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    await file.mv(filePath);
+
+    const editedImage = `https://api.editezy.com/uploads/user-edited-logos/${fileName}`;
 
     const history = new UserHistory({
       userId,
       logoId,
-      editedImage,
+      editedImage
     });
 
     const savedHistory = await history.save();
 
-    res.status(201).json(savedHistory);
+    return res.status(201).json({
+      success: true,
+      message: "User history saved successfully",
+      data: savedHistory
+    });
+
   } catch (error) {
-    console.error("Error saving user history:", error);
-    res.status(500).json({
+    console.error("❌ Error saving user history:", error);
+
+    return res.status(500).json({
+      success: false,
       message: "Error saving user history",
-      error: error.message,
+      error: error.message
     });
   }
 };
-
 
 
 // ✅ Get User History
@@ -4610,75 +4782,111 @@ export const verifyOTPs = async (req, res) => {
 
 
 
-// ✅ Send message with optional images, socket, and push notification
 export const sendMessageController = async (req, res) => {
   try {
     const { senderId, receiverId } = req.params;
     const { message } = req.body;
 
     if (!senderId || !receiverId) {
-      return res.status(400).json({ success: false, message: "Sender and receiver IDs are required" });
+      return res.status(400).json({
+        success: false,
+        message: "Sender and receiver IDs are required"
+      });
     }
 
-    // Validate ObjectIds
-    if (!mongoose.Types.ObjectId.isValid(senderId) || !mongoose.Types.ObjectId.isValid(receiverId)) {
-      return res.status(400).json({ success: false, message: "Invalid sender or receiver ID" });
+    if (
+      !mongoose.Types.ObjectId.isValid(senderId) ||
+      !mongoose.Types.ObjectId.isValid(receiverId)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid sender or receiver ID"
+      });
     }
 
-    // Fetch sender user
     const sender = await User.findById(senderId).lean();
-    if (!sender) return res.status(404).json({ success: false, message: "Sender not found" });
+    if (!sender) {
+      return res.status(404).json({
+        success: false,
+        message: "Sender not found"
+      });
+    }
 
-    // Optional: Check if receiverId exists in sender's customers (warning only)
-    const customer = sender.customers?.find(cust => cust._id.toString() === receiverId);
-    if (!customer) console.warn("⚠️ Receiver is not a customer of sender, but message will still be sent.");
+    const uploadDir = path.join(__dirname, "../uploads/chat_images");
 
-    // Upload images if any
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
     let images = [];
+
+    // 🖼️ upload images locally
     if (req.files && req.files.images) {
-      const files = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
+      const files = Array.isArray(req.files.images)
+        ? req.files.images
+        : [req.files.images];
+
       for (const file of files) {
-        const result = await cloudinary.uploader.upload(file.tempFilePath, { folder: 'chat_images' });
-        images.push(result.secure_url);
+        const uniqueSuffix =
+          Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+        const ext = path.extname(file.name);
+
+        const fileName = `chat_${uniqueSuffix}${ext}`;
+        const filePath = path.join(uploadDir, fileName);
+
+        await file.mv(filePath);
+
+        images.push(
+          `https://api.editezy.com/uploads/chat_images/${fileName}`
+        );
       }
     }
 
-    // Save chat regardless of receiver existence
     const newChat = new Chat({
       senderId,
       receiverId,
-      message: message || '',
-      images,
+      message: message || "",
+      images
     });
 
     const savedChat = await newChat.save();
 
-    // Emit via Socket.IO
-    const io = req.app.get('io');
+    // 📡 Socket emit
+    const io = req.app.get("io");
     if (io) {
       const roomId = `${senderId}_${receiverId}`;
-      io.to(roomId).emit('receiveMessage', savedChat);
-      console.log(`📤 Message emitted to room: ${roomId}`);
+      io.to(roomId).emit("receiveMessage", savedChat);
     }
 
-    // 🔔 PUSH NOTIFICATION (Non-blocking, safe)
+    // 🔔 Push notification (unchanged)
     sendPushNotification({
       receiverId,
       senderName: sender.name,
       messageText: message,
       hasImage: images.length > 0,
       chatId: savedChat._id,
-      senderId,
-    }).catch(err => console.error("Push error (ignored):", err.message));
+      senderId
+    }).catch((err) =>
+      console.error("Push error (ignored):", err.message)
+    );
 
-    return res.status(201).json({ success: true, message: "Message sent successfully", chat: savedChat });
+    return res.status(201).json({
+      success: true,
+      message: "Message sent successfully",
+      chat: savedChat
+    });
 
   } catch (error) {
     console.error("❌ Send message error:", error);
-    return res.status(500).json({ success: false, message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
-
 // ✅ Get chat messages between two users using route params
 // ✅ Get chat between two users
 // ✅ Get chat messages between two users (or sender + receiverId even if receiver not in User)
@@ -5007,18 +5215,32 @@ export const addUserBusinessCard = async (req, res) => {
       });
     }
 
-    // Logo upload (Cloudinary)
-    let logoUrl = businessCardData.logo || "";
-    if (req.files && req.files.logo) {
-      const file = req.files.logo;
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "business_cards",
-        resource_type: "auto",
-      });
-      logoUrl = result.secure_url;
+    const uploadDir = path.join(__dirname, "../uploads/business_cards");
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
     }
 
-    // ✅ socialLinks handling: JSON parse if sent as string
+    let logoUrl = businessCardData.logo || "";
+
+    // 🖼️ logo upload local
+    if (req.files && req.files.logo) {
+      const file = req.files.logo;
+
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+      const ext = path.extname(file.name);
+
+      const fileName = `business_logo_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      logoUrl = `https://api.editezy.com/uploads/business_cards/${fileName}`;
+    }
+
+    // 🔗 socialLinks parse
     let socialLinks = [];
     if (businessCardData.socialLinks) {
       try {
@@ -5030,15 +5252,15 @@ export const addUserBusinessCard = async (req, res) => {
     }
 
     const newBusinessCard = {
-      name: businessCardData.name || '',
-      title: businessCardData.title || '',
-      company: businessCardData.company || '',
-      email: businessCardData.email || '',
-      phone: businessCardData.phone || '',
-      address: businessCardData.address || '',
-      website: businessCardData.website || '',
+      name: businessCardData.name || "",
+      title: businessCardData.title || "",
+      company: businessCardData.company || "",
+      email: businessCardData.email || "",
+      phone: businessCardData.phone || "",
+      address: businessCardData.address || "",
+      website: businessCardData.website || "",
       logo: logoUrl,
-      socialLinks, // ✅ updated here
+      socialLinks,
       createdAt: new Date(),
       updatedAt: new Date(),
       cardId: Date.now().toString()
@@ -5047,7 +5269,7 @@ export const addUserBusinessCard = async (req, res) => {
     user.userBusinessCards.push(newBusinessCard);
     await user.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Business card added successfully",
       data: newBusinessCard,
@@ -5055,8 +5277,9 @@ export const addUserBusinessCard = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error adding business card:", error);
-    res.status(500).json({
+    console.error("❌ Error adding business card:", error);
+
+    return res.status(500).json({
       success: false,
       message: "Error adding business card",
       error: error.message
@@ -5812,24 +6035,21 @@ export const createUserPayment = async (req, res) => {
 
     const file = req.files?.media;
 
-    // 🔹 file check
     if (!file) {
       return res.status(400).json({
         success: false,
-        message: "Media file (image/video) is required",
+        message: "Media file (image/video) is required"
       });
     }
 
-    // 🔹 user check
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "User not found"
       });
     }
 
-    // 🔥 reels removed from switch
     let itemExists;
     let folderName;
 
@@ -5852,23 +6072,34 @@ export const createUserPayment = async (req, res) => {
       default:
         return res.status(400).json({
           success: false,
-          message: "Invalid itemName",
+          message: "Invalid itemName"
         });
     }
 
-    // 🔹 item check
     if (!itemExists) {
       return res.status(404).json({
         success: false,
-        message: `${itemName} item not found`,
+        message: `${itemName} item not found`
       });
     }
 
-    // 🔹 Validate file type
-    const allowedImageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-    const allowedVideoTypes = ['video/mp4', 'video/mov', 'video/avi', 'video/mkv'];
-    
+    const allowedImageTypes = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/webp"
+    ];
+
+    const allowedVideoTypes = [
+      "video/mp4",
+      "video/mov",
+      "video/avi",
+      "video/mkv"
+    ];
+
     let mediaType;
+
     if (allowedImageTypes.includes(file.mimetype)) {
       mediaType = "image";
     } else if (allowedVideoTypes.includes(file.mimetype)) {
@@ -5876,85 +6107,56 @@ export const createUserPayment = async (req, res) => {
     } else {
       return res.status(400).json({
         success: false,
-        message: "Invalid file type. Allowed: JPEG, PNG, GIF, WEBP for images; MP4, MOV, AVI, MKV for videos",
+        message:
+          "Invalid file type. Allowed images/videos only"
       });
     }
 
-    // 🔹 Check file size (limit to 50MB for videos, 10MB for images)
-    const maxSize = mediaType === "video" ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    const maxSize =
+      mediaType === "video"
+        ? 50 * 1024 * 1024
+        : 10 * 1024 * 1024;
+
     if (file.size > maxSize) {
       return res.status(400).json({
         success: false,
-        message: `File too large. Maximum size: ${mediaType === "video" ? "50MB" : "10MB"}`,
+        message: `File too large (max ${
+          mediaType === "video" ? "50MB" : "10MB"
+        })`
       });
     }
 
-    let cloudinaryResult;
+    const uploadDir = path.join(
+      __dirname,
+      `../uploads/${folderName}`
+    );
 
-    try {
-      // 🔹 Read file as buffer for better compatibility
-      const fileBuffer = fs.readFileSync(file.tempFilePath);
-      
-      // 🔹 For images, convert to base64 for Cloudinary
-      const base64File = `data:${file.mimetype};base64,${fileBuffer.toString('base64')}`;
-      
-      // Upload to Cloudinary with proper format
-      cloudinaryResult = await cloudinary.uploader.upload(base64File, {
-        folder: folderName,
-        resource_type: mediaType === "video" ? "video" : "image",
-        // Force format for images to ensure compatibility
-        ...(mediaType === "image" && { format: 'jpg' }), // Convert to JPG for consistency
-        // Add transformation for better compatibility
-        transformation: mediaType === "image" ? [
-          { quality: "auto" },
-          { fetch_format: "auto" }
-        ] : [],
-      });
-
-      // 🔹 delete temp file
-      if (fs.existsSync(file.tempFilePath)) {
-        fs.unlinkSync(file.tempFilePath);
-      }
-
-    } catch (uploadError) {
-      console.error("Cloudinary upload error:", uploadError);
-      
-      // 🔹 Clean up temp file if exists
-      if (file.tempFilePath && fs.existsSync(file.tempFilePath)) {
-        try {
-          fs.unlinkSync(file.tempFilePath);
-        } catch (unlinkError) {
-          console.error("Error deleting temp file:", unlinkError);
-        }
-      }
-      
-      // 🔹 More detailed error message
-      let errorMessage = "Failed to upload media to Cloudinary";
-      if (uploadError.http_code === 400) {
-        errorMessage = "Unsupported file format. Please try a different file.";
-      } else if (uploadError.http_code === 413) {
-        errorMessage = "File too large for Cloudinary.";
-      }
-      
-      return res.status(500).json({
-        success: false,
-        message: errorMessage,
-        error: uploadError.message,
-      });
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
     }
 
-    // 🔹 create payment
+    const uniqueSuffix =
+      Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+    const ext = path.extname(file.name);
+
+    const fileName = `${itemName}_payment_${uniqueSuffix}${ext}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    await file.mv(filePath);
+
+    const mediaUrl = `https://api.editezy.com/uploads/${folderName}/${fileName}`;
+
     const payment = await UserPayments.create({
       userId,
       itemName: itemName.toLowerCase(),
       itemId,
       amount,
-      mediaUrl: cloudinaryResult.secure_url,
+      mediaUrl,
       mediaType,
       status: "pending",
       paidAt: null,
-      transactionId: null,
-      publicId: cloudinaryResult.public_id, // Store public ID for later deletion if needed
+      transactionId: null
     });
 
     return res.status(201).json({
@@ -5966,16 +6168,17 @@ export const createUserPayment = async (req, res) => {
         amount: payment.amount,
         mediaUrl: payment.mediaUrl,
         status: payment.status,
-        mediaType: payment.mediaType,
-      },
+        mediaType: payment.mediaType
+      }
     });
 
   } catch (error) {
-    console.error("UserPayment Error:", error);
+    console.error("❌ UserPayment Error:", error);
+
     return res.status(500).json({
       success: false,
       message: "Error creating payment",
-      error: error.message,
+      error: error.message
     });
   }
 };
@@ -6086,82 +6289,89 @@ export const createBusinessCardPayment = async (req, res) => {
     if (!userId || !businessCardId || !amount) {
       return res.status(400).json({
         success: false,
-        message: "userId, businessCardId and amount are required",
+        message: "userId, businessCardId and amount are required"
       });
     }
 
     const file = req.files?.media;
+
     if (!file) {
       return res.status(400).json({
         success: false,
-        message: "Image file is required",
+        message: "Image file is required"
       });
     }
 
     if (!file.mimetype.startsWith("image/")) {
       return res.status(400).json({
         success: false,
-        message: "Only image files are allowed",
+        message: "Only image files are allowed"
       });
     }
 
-    // 🔹 Check user
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
     }
 
-    // 🔹 Check business card template
     const template = await BusinessCard.findById(businessCardId);
     if (!template) {
-      return res.status(404).json({ success: false, message: "Business card template not found" });
-    }
-
-    // 🔹 Upload image + PDF to Cloudinary (parallel)
-    let cloudinaryResult;
-    let pdfCloudinaryResult = null;
-
-    try {
-      // Image upload
-      cloudinaryResult = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "business-card-payments",
-        resource_type: "image",
-      });
-      fs.unlinkSync(file.tempFilePath);
-
-      // PDF upload (optional)
-      if (req.files?.pdf) {
-        const pdfFile = req.files.pdf;
-        pdfCloudinaryResult = await cloudinary.uploader.upload(pdfFile.tempFilePath, {
-          folder: "business-card-payments/pdfs",
-          resource_type: "raw",
-        });
-        fs.unlinkSync(pdfFile.tempFilePath);
-      }
-
-    } catch (err) {
-      console.error("Cloudinary upload error:", err);
-      return res.status(500).json({
+      return res.status(404).json({
         success: false,
-        message: "Failed to upload file",
-        error: err.message,
+        message: "Business card template not found"
       });
     }
 
-    // 🔹 Create payment record
+    const uploadDir = path.join(__dirname, "../uploads/business-card-payments");
+    const pdfDir = path.join(uploadDir, "pdfs");
+
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true });
+
+    // 🖼️ IMAGE SAVE
+    const imgSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const imgExt = path.extname(file.name);
+
+    const imgName = `payment_${imgSuffix}${imgExt}`;
+    const imgPath = path.join(uploadDir, imgName);
+
+    await file.mv(imgPath);
+
+    const mediaUrl = `https://api.editezy.com/uploads/business-card-payments/${imgName}`;
+
+    // 📄 PDF SAVE (optional)
+    let pdfUrl = null;
+
+    if (req.files?.pdf) {
+      const pdfFile = req.files.pdf;
+
+      const pdfSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const pdfExt = path.extname(pdfFile.name);
+
+      const pdfName = `payment_pdf_${pdfSuffix}${pdfExt}`;
+      const pdfPath = path.join(pdfDir, pdfName);
+
+      await pdfFile.mv(pdfPath);
+
+      pdfUrl = `https://api.editezy.com/uploads/business-card-payments/pdfs/${pdfName}`;
+    }
+
     const payment = await BusinessCardPayment.create({
       userId,
       businessCardId,
-      mediaUrl: cloudinaryResult.secure_url,
-      pdfUrl: pdfCloudinaryResult?.secure_url || null,
+      mediaUrl,
+      pdfUrl,
       mediaType: "image",
       amount,
       status: "pending",
       paidAt: null,
-      transactionId: null,
+      transactionId: null
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Business card payment initiated (Pending confirmation)",
       payment: {
@@ -6169,17 +6379,18 @@ export const createBusinessCardPayment = async (req, res) => {
         businessCardId: payment.businessCardId,
         amount: payment.amount,
         mediaUrl: payment.mediaUrl,
-        pdfUrl: payment.pdfUrl || null,
-        status: payment.status,
-      },
+        pdfUrl: payment.pdfUrl,
+        status: payment.status
+      }
     });
 
   } catch (error) {
-    console.error("BusinessCardPayment Error:", error);
-    res.status(500).json({
+    console.error("❌ BusinessCardPayment Error:", error);
+
+    return res.status(500).json({
       success: false,
       message: "Error creating business card payment",
-      error: error.message,
+      error: error.message
     });
   }
 };

@@ -1,9 +1,8 @@
 import Poster from "../Models/Poster.js";
 import cloudinary from "../config/cloudinary.js";
 import { createCanvas, loadImage } from 'canvas';
-import { promises as fs } from 'fs';
+//import { promises as fs } from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import os from 'os';
 import PosterCanvas from "../Models/PosterCanvas.js";
 import streamifier  from 'streamifier'
@@ -16,6 +15,14 @@ import sharp from "sharp";
 
 import dotenv from 'dotenv';
 import User from "../Models/User.js";
+
+import { fileURLToPath } from "url";
+import fs from "fs";
+
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 
 dotenv.config();  // Load environment variables from .env file
 
@@ -189,31 +196,46 @@ export const editPoster = async (req, res) => {
       festivalDate,
       inStock,
       tags,
-      posterlang   // ✅ NEW FIELD ADDED ONLY
+      posterlang
     } = req.body;
 
     const poster = await Poster.findById(posterId);
 
     if (!poster) {
-      return res.status(404).json({ message: 'Poster not found' });
+      return res.status(404).json({
+        success: false,
+        message: "Poster not found"
+      });
     }
 
-    let images = poster.images;
+    const uploadDir = path.join(__dirname, "../uploads/posters");
 
+    let images = poster.images || [];
+
+    // 🖼️ ADD NEW IMAGES
     if (req.files && req.files.images) {
-      const files = Array.isArray(req.files.images) ? req.files.images : [req.files.images];
-      const newImages = [];
+      const files = Array.isArray(req.files.images)
+        ? req.files.images
+        : [req.files.images];
 
       for (const file of files) {
-        const result = await cloudinary.uploader.upload(file.tempFilePath, {
-          folder: "poster",
-        });
-        newImages.push(result.secure_url);
-      }
+        const uniqueSuffix =
+          Date.now() + "-" + Math.round(Math.random() * 1e9);
 
-      images = [...images, ...newImages];
+        const ext = path.extname(file.name);
+
+        const fileName = `poster_${uniqueSuffix}${ext}`;
+        const filePath = path.join(uploadDir, fileName);
+
+        await file.mv(filePath);
+
+        images.push(
+          `https://api.editezy.com/uploads/posters/${fileName}`
+        );
+      }
     }
 
+    // 📝 update fields
     if (name) poster.name = name;
     if (categoryName) poster.categoryName = categoryName;
     if (price) poster.price = price;
@@ -222,24 +244,28 @@ export const editPoster = async (req, res) => {
     if (festivalDate) poster.festivalDate = festivalDate;
     if (inStock !== undefined) poster.inStock = inStock;
     if (tags) poster.tags = tags.split(",");
-
-    if (posterlang) poster.posterlang = posterlang; // ✅ NEW FIELD UPDATED
+    if (posterlang) poster.posterlang = posterlang;
 
     poster.images = images;
 
     const updatedPoster = await poster.save();
 
     return res.status(200).json({
+      success: true,
       message: "Poster updated successfully",
-      poster: updatedPoster,
+      poster: updatedPoster
     });
 
   } catch (error) {
     console.error("❌ Error editing poster:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
-
 // ✅ Delete a poster
 export const deletePoster = async (req, res) => {
   try {
@@ -888,85 +914,256 @@ const generatePreviewImage = async (bgUrl, overlayUrls = [], overlaySettings = {
 // };
 
 
+// export const canvasCreatePoster = async (req, res) => {
+//   try {
+//     const {
+//       name, 
+//       categoryName, 
+//       festivalDate, 
+//       description, 
+//       tags,
+//       email, 
+//       mobile, 
+//       title,
+//       designData,
+//       posterlang
+//     } = req.body;
+
+//     if (!req.files || !req.files.posterImage) {
+//       return res.status(400).json({ 
+//         success: false,
+//         message: 'Poster image is required' 
+//       });
+//     }
+
+//     // Parse designData if it's a JSON string
+//     const designDataParsed = typeof designData === 'string' ? JSON.parse(designData) : designData;
+
+//     // Upload final poster image WITHOUT watermark
+//     const posterFile = req.files.posterImage;
+//     const posterUpload = await cloudinary.uploader.upload(posterFile.tempFilePath, {
+//       folder: 'posters/final',
+//       quality: 'auto:good',
+//       format: 'jpg'
+//       // Removed watermark transformation
+//     });
+
+//     // Upload bgImage if provided
+//     let bgImageData = null;
+//     if (req.files.bgImage) {
+//       const bgUpload = await cloudinary.uploader.upload(req.files.bgImage.tempFilePath, {
+//         folder: 'posters/bg'
+//       });
+//       bgImageData = {
+//         url: bgUpload.secure_url,
+//         publicId: bgUpload.public_id
+//       };
+//     }
+
+//     // Upload multiple overlayImages if provided
+//     let overlayImagesData = [];
+//     if (req.files.overlayImages) {
+//       const overlayFiles = Array.isArray(req.files.overlayImages) 
+//         ? req.files.overlayImages 
+//         : [req.files.overlayImages];
+
+//       for (const file of overlayFiles) {
+//         const overlayUpload = await cloudinary.uploader.upload(file.tempFilePath, {
+//           folder: 'posters/overlay'
+//         });
+//         overlayImagesData.push({
+//           url: overlayUpload.secure_url,
+//           publicId: overlayUpload.public_id
+//         });
+//       }
+//     }
+
+//     // Create new Poster document
+//     const newPoster = new Poster({
+//       name,
+//       categoryName,
+//       festivalDate: festivalDate || undefined,
+//       description: description || undefined,
+//       tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
+//       email: email || undefined,
+//       mobile: mobile || undefined,
+//       title: title || undefined,
+//       posterlang,
+//       posterImage: {
+//         url: posterUpload.secure_url,
+//         publicId: posterUpload.public_id
+//       },
+//       designData: {
+//         bgImage: bgImageData,
+//         overlayImages: overlayImagesData,
+//         bgImageSettings: designDataParsed?.bgImageSettings || {},
+//         overlaySettings: designDataParsed?.overlaySettings || { overlays: [] },
+//         textSettings: designDataParsed?.textSettings || {},
+//         textStyles: designDataParsed?.textStyles || {},
+//         textVisibility: designDataParsed?.textVisibility || {},
+//         overlayImageFilters: designDataParsed?.overlayImageFilters || []
+//       },
+//       createdAt: new Date(),
+//       updatedAt: new Date()
+//     });
+
+//     await newPoster.save();
+
+//     return res.status(201).json({
+//       success: true,
+//       message: 'Poster created successfully',
+//       poster: {
+//         _id: newPoster._id,
+//         name: newPoster.name,
+//         categoryName: newPoster.categoryName,
+//         festivalDate: newPoster.festivalDate,
+//         description: newPoster.description,
+//         tags: newPoster.tags,
+//         email: newPoster.email,
+//         mobile: newPoster.mobile,
+//         title: newPoster.title,
+//         posterImage: newPoster.posterImage.url,
+//         posterlang: newPoster.posterlang,
+//         createdAt: newPoster.createdAt
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error('Error creating poster:', error);
+//     return res.status(500).json({ 
+//       success: false,
+//       message: 'Error creating poster', 
+//       error: error.message 
+//     });
+//   }
+// };
+
+
+
 export const canvasCreatePoster = async (req, res) => {
   try {
     const {
-      name, 
-      categoryName, 
-      festivalDate, 
-      description, 
+      name,
+      categoryName,
+      festivalDate,
+      description,
       tags,
-      email, 
-      mobile, 
+      email,
+      mobile,
       title,
       designData,
       posterlang
     } = req.body;
 
     if (!req.files || !req.files.posterImage) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Poster image is required' 
+        message: "Poster image is required"
       });
     }
 
-    // Parse designData if it's a JSON string
-    const designDataParsed = typeof designData === 'string' ? JSON.parse(designData) : designData;
+    const parseIfString = (data) => {
+      if (typeof data === "string") {
+        try {
+          return JSON.parse(data);
+        } catch (e) {
+          return data;
+        }
+      }
+      return data;
+    };
 
-    // Upload final poster image WITHOUT watermark
+    const designDataParsed = parseIfString(designData);
+
+    const baseUrl = "https://api.editezy.com";
+
+    const uploadDir = path.join(__dirname, "../uploads/posters");
+    const bgDir = path.join(uploadDir, "bg");
+    const overlayDir = path.join(uploadDir, "overlay");
+
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true });
+    if (!fs.existsSync(overlayDir)) fs.mkdirSync(overlayDir, { recursive: true });
+
+    // =========================
+    // 🎨 MAIN POSTER IMAGE
+    // =========================
     const posterFile = req.files.posterImage;
-    const posterUpload = await cloudinary.uploader.upload(posterFile.tempFilePath, {
-      folder: 'posters/final',
-      quality: 'auto:good',
-      format: 'jpg'
-      // Removed watermark transformation
-    });
 
-    // Upload bgImage if provided
+    const posterName =
+      "poster_" + Date.now() + "-" + Math.round(Math.random() * 1e9) + path.extname(posterFile.name);
+
+    const posterPath = path.join(uploadDir, posterName);
+
+    await posterFile.mv(posterPath);
+
+    const posterUpload = {
+      url: `${baseUrl}/uploads/posters/${posterName}`,
+      publicId: posterName
+    };
+
+    // =========================
+    // 🖼 BG IMAGE
+    // =========================
     let bgImageData = null;
+
     if (req.files.bgImage) {
-      const bgUpload = await cloudinary.uploader.upload(req.files.bgImage.tempFilePath, {
-        folder: 'posters/bg'
-      });
+      const bgFile = req.files.bgImage;
+
+      const bgName =
+        "bg_" + Date.now() + "-" + Math.round(Math.random() * 1e9) + path.extname(bgFile.name);
+
+      const bgPath = path.join(bgDir, bgName);
+
+      await bgFile.mv(bgPath);
+
       bgImageData = {
-        url: bgUpload.secure_url,
-        publicId: bgUpload.public_id
+        url: `${baseUrl}/uploads/posters/bg/${bgName}`,
+        publicId: bgName
       };
     }
 
-    // Upload multiple overlayImages if provided
+    // =========================
+    // 🔺 OVERLAY IMAGES
+    // =========================
     let overlayImagesData = [];
+
     if (req.files.overlayImages) {
-      const overlayFiles = Array.isArray(req.files.overlayImages) 
-        ? req.files.overlayImages 
+      const overlayFiles = Array.isArray(req.files.overlayImages)
+        ? req.files.overlayImages
         : [req.files.overlayImages];
 
       for (const file of overlayFiles) {
-        const overlayUpload = await cloudinary.uploader.upload(file.tempFilePath, {
-          folder: 'posters/overlay'
-        });
+        const overlayName =
+          "overlay_" + Date.now() + "-" + Math.round(Math.random() * 1e9) + path.extname(file.name);
+
+        const overlayPath = path.join(overlayDir, overlayName);
+
+        await file.mv(overlayPath);
+
         overlayImagesData.push({
-          url: overlayUpload.secure_url,
-          publicId: overlayUpload.public_id
+          url: `${baseUrl}/uploads/posters/overlay/${overlayName}`,
+          publicId: overlayName
         });
       }
     }
 
-    // Create new Poster document
+    // =========================
+    // 🧠 CREATE POSTER
+    // =========================
     const newPoster = new Poster({
       name,
       categoryName,
       festivalDate: festivalDate || undefined,
       description: description || undefined,
-      tags: tags ? tags.split(',').map(tag => tag.trim()) : [],
+      tags: tags ? tags.split(",").map(tag => tag.trim()) : [],
       email: email || undefined,
       mobile: mobile || undefined,
       title: title || undefined,
       posterlang,
-      posterImage: {
-        url: posterUpload.secure_url,
-        publicId: posterUpload.public_id
-      },
+
+      posterImage: posterUpload,
+
       designData: {
         bgImage: bgImageData,
         overlayImages: overlayImagesData,
@@ -977,6 +1174,7 @@ export const canvasCreatePoster = async (req, res) => {
         textVisibility: designDataParsed?.textVisibility || {},
         overlayImageFilters: designDataParsed?.overlayImageFilters || []
       },
+
       createdAt: new Date(),
       updatedAt: new Date()
     });
@@ -985,7 +1183,7 @@ export const canvasCreatePoster = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: 'Poster created successfully',
+      message: "Poster created successfully",
       poster: {
         _id: newPoster._id,
         name: newPoster.name,
@@ -1003,15 +1201,14 @@ export const canvasCreatePoster = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error creating poster:', error);
-    return res.status(500).json({ 
+    console.error("❌ Error creating poster:", error);
+    return res.status(500).json({
       success: false,
-      message: 'Error creating poster', 
-      error: error.message 
+      message: "Error creating poster",
+      error: error.message
     });
   }
 };
-
 
 
 
@@ -1076,37 +1273,58 @@ export const getSingleCanvasPoster = async (req, res) => {
 export const createBanner = async (req, res) => {
   try {
     if (!req.files || !req.files.images) {
-      return res.status(400).json({ message: "No banner images uploaded" });
+      return res.status(400).json({
+        success: false,
+        message: "No banner images uploaded"
+      });
     }
 
     const files = Array.isArray(req.files.images)
       ? req.files.images
       : [req.files.images];
 
+    const uploadDir = path.join(__dirname, "../uploads/banners");
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
     const imageUrls = [];
 
     for (const file of files) {
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "banners",
-      });
-      imageUrls.push(result.secure_url);
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+      const ext = path.extname(file.name);
+      const fileName = `banner_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      imageUrls.push(
+        `https://api.editezy.com/uploads/banners/${fileName}`
+      );
     }
 
     const newBanner = new Banner({
-      images: imageUrls,
+      images: imageUrls
     });
 
     await newBanner.save();
 
-    res.status(201).json({
+    return res.status(201).json({
+      success: true,
       message: "Banner created successfully",
-      banner: newBanner,
+      banner: newBanner
     });
+
   } catch (error) {
     console.error("❌ Error creating banner:", error);
-    res.status(500).json({
-      message: "Error creating banner",
-      error: error.message,
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
     });
   }
 };
@@ -1123,26 +1341,42 @@ export const getAllBanners = async (req, res) => {
   }
 };
 
-// UPDATE Banner Images by ID
 export const updateBanner = async (req, res) => {
   try {
     const { id } = req.params;
 
     if (!req.files || !req.files.images) {
-      return res.status(400).json({ message: "No banner images uploaded" });
+      return res.status(400).json({
+        success: false,
+        message: "No banner images uploaded"
+      });
     }
 
     const files = Array.isArray(req.files.images)
       ? req.files.images
       : [req.files.images];
 
+    const uploadDir = path.join(__dirname, "../uploads/banners");
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
     const imageUrls = [];
 
     for (const file of files) {
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "banners",
-      });
-      imageUrls.push(result.secure_url);
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+      const ext = path.extname(file.name);
+      const fileName = `banner_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      imageUrls.push(
+        `https://api.editezy.com/uploads/banners/${fileName}`
+      );
     }
 
     const updatedBanner = await Banner.findByIdAndUpdate(
@@ -1152,19 +1386,28 @@ export const updateBanner = async (req, res) => {
     );
 
     if (!updatedBanner) {
-      return res.status(404).json({ message: "Banner not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Banner not found"
+      });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Banner updated successfully",
-      banner: updatedBanner,
+      banner: updatedBanner
     });
+
   } catch (error) {
     console.error("❌ Error updating banner:", error);
-    res.status(500).json({ message: "Error updating banner", error: error.message });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
-
 // DELETE Banner by ID
 export const deleteBanner = async (req, res) => {
   try {

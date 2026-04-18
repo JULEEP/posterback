@@ -22,8 +22,13 @@ import Sticker from "../Models/Sticker.js";
 import WalletConfig from "../Models/WalletConfig.js";
 import AmountConfig from "../Models/AmountConfig.js";
 import Celebration from "../Models/Celebration.js";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // User Controller (GET All Users)
 export const getAllUsers = async (req, res) => {
@@ -457,91 +462,103 @@ export const createLogo = async (req, res) => {
     const { name, logoCategoryId, placeholders, previewImageData } = req.body;
 
     if (!logoCategoryId) {
-      return res.status(400).json({ message: "Logo category is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Logo category is required"
+      });
     }
 
     if (!req.files || !req.files.image) {
-      return res.status(400).json({ message: "Logo image is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Logo image is required"
+      });
     }
 
     const file = req.files.image;
 
-    // 1. Upload ORIGINAL image to Cloudinary
-    const originalResult = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: "logo-images",
-    });
-    const originalImage = originalResult.secure_url;
+    // 📁 upload folder
+    const uploadDir = path.join(__dirname, "../uploads/logo-images");
+    const previewDir = path.join(__dirname, "../uploads/logo-preview");
 
-    // 2. Upload PREVIEW image if provided
-    let previewImage = '';
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    if (!fs.existsSync(previewDir)) fs.mkdirSync(previewDir, { recursive: true });
+
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.name);
+
+    const fileName = `logo_${uniqueSuffix}${ext}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    // 1️⃣ Save original image
+    await file.mv(filePath);
+
+    const originalImage = `https://api.editezy.com/uploads/logo-images/${fileName}`;
+
+    // 2️⃣ Preview image (base64 optional)
+    let previewImage = "";
+
     if (previewImageData) {
       try {
-        // Remove data URL prefix if present
-        const base64Data = previewImageData.replace(/^data:image\/\w+;base64,/, '');
-        const buffer = Buffer.from(base64Data, 'base64');
-        
-        const previewResult = await new Promise((resolve, reject) => {
-          const uploadStream = cloudinary.uploader.upload_stream(
-            {
-              folder: "logo-images/preview",
-              format: 'png'
-            },
-            (error, result) => {
-              if (error) reject(error);
-              else resolve(result);
-            }
-          );
-          uploadStream.end(buffer);
-        });
-        
-        previewImage = previewResult.secure_url;
-      } catch (error) {
-        console.error('Error uploading preview image:', error);
-        previewImage = originalImage; // Fallback to original if error
+        const base64Data = previewImageData.replace(
+          /^data:image\/\w+;base64,/,
+          ""
+        );
+
+        const buffer = Buffer.from(base64Data, "base64");
+
+        const previewName = `preview_${uniqueSuffix}.png`;
+        const previewPath = path.join(previewDir, previewName);
+
+        fs.writeFileSync(previewPath, buffer);
+
+        previewImage = `https://api.editezy.com/uploads/logo-preview/${previewName}`;
+      } catch (err) {
+        console.error("Preview error:", err);
+        previewImage = originalImage;
       }
     }
 
-    // Parse placeholders
+    // 3️⃣ Parse placeholders
     let parsedPlaceholders = [];
-    
+
     if (placeholders) {
       try {
-        if (typeof placeholders === 'string') {
-          parsedPlaceholders = JSON.parse(placeholders);
-        } else if (Array.isArray(placeholders)) {
-          parsedPlaceholders = placeholders;
-        }
-      } catch (error) {
-        console.error('Error parsing placeholders:', error);
+        parsedPlaceholders =
+          typeof placeholders === "string"
+            ? JSON.parse(placeholders)
+            : placeholders;
+      } catch (err) {
         parsedPlaceholders = [];
       }
     }
 
+    // 4️⃣ Save DB
     const newLogo = new Logo({
       name,
-      image: originalImage,        // Original image
-      previewImage: previewImage,  // Preview image with overlays
+      image: originalImage,
+      previewImage: previewImage || originalImage,
       logoCategoryId,
-      placeholders: parsedPlaceholders,
+      placeholders: parsedPlaceholders
     });
 
     const savedLogo = await newLogo.save();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Logo created successfully",
       data: savedLogo
     });
 
   } catch (error) {
-    console.error("Error uploading logo:", error);
-    res.status(500).json({
-      message: "Error creating logo",
-      error: error.message,
+    console.error("❌ Create Logo Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
     });
   }
 };
-
 
 // ✅ Get all logos with language support
 // ✅ Get all logos with language support (logo name + category name both translate)
@@ -651,29 +668,51 @@ export const getAllLogosForAdmin = async (req, res) => {
 };
 
 
-// ✅ Update a logo
 export const updateLogo = async (req, res) => {
   try {
     const { logoId } = req.params;
     const { name, description, price, logoCategoryId } = req.body;
 
     const logo = await Logo.findById(logoId);
+
     if (!logo) {
-      return res.status(404).json({ message: "Logo not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Logo not found"
+      });
     }
 
-    // 🔄 Update image if new image uploaded
+    const uploadDir = path.join(__dirname, "../uploads/logo-images");
+
+    // 🔥 update image
     if (req.files && req.files.image) {
       const file = req.files.image;
 
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "logo-images",
-      });
+      // delete old file
+      if (logo.image) {
+        const oldPath = path.join(
+          __dirname,
+          "../uploads/logo-images",
+          logo.image.split("/").pop()
+        );
 
-      logo.image = result.secure_url;
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
+
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const ext = path.extname(file.name);
+
+      const fileName = `logo_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      logo.image = `https://api.editezy.com/uploads/logo-images/${fileName}`;
     }
 
-    // 🔄 Update other fields
+    // 🔥 update fields
     if (name) logo.name = name;
     if (description) logo.description = description;
     if (price) logo.price = price;
@@ -681,12 +720,18 @@ export const updateLogo = async (req, res) => {
 
     const updatedLogo = await logo.save();
 
-    res.status(200).json(updatedLogo);
+    return res.status(200).json({
+      success: true,
+      message: "Logo updated successfully",
+      data: updatedLogo
+    });
+
   } catch (error) {
-    console.error("Error updating logo:", error);
-    res.status(500).json({
-      message: "Error updating logo",
-      error: error.message,
+    console.error("❌ Update Logo Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
     });
   }
 };
@@ -992,51 +1037,69 @@ export const getAllRedemptionRequests = async (req, res) => {
 
 
 
-// ✅ Create Logo Category
 export const createLogoCategory = async (req, res) => {
   try {
     const { name } = req.body;
 
     if (!name) {
-      return res.status(400).json({ message: "Category name is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Category name is required"
+      });
     }
 
     if (!req.files || !req.files.image) {
-      return res.status(400).json({ message: "Category image is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Category image is required"
+      });
     }
 
     const file = req.files.image;
 
-    // Upload image to Cloudinary
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: "logo-category-images",
-    });
+    const uploadDir = path.join(__dirname, "../uploads/logo-category");
 
-    const image = result.secure_url;
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.name);
+
+    const fileName = `logo_cat_${uniqueSuffix}${ext}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    await file.mv(filePath);
+
+    // 👉 LOCALHOST BASE URL
+    const image = `https://api.editezy.com/uploads/logo-category/${fileName}`;
 
     const newCategory = new LogoCategory({
       name,
-      image,
+      image
     });
 
     const savedCategory = await newCategory.save();
 
-    res.status(201).json(savedCategory);
-  } catch (error) {
-    console.error("Error creating logo category:", error);
+    return res.status(201).json(savedCategory);
 
-    // duplicate name error handle
+  } catch (error) {
+    console.error("❌ Create Logo Category Error:", error);
+
     if (error.code === 11000) {
-      return res.status(400).json({ message: "Category already exists." });
+      return res.status(400).json({
+        success: false,
+        message: "Category already exists"
+      });
     }
 
-    res.status(500).json({
-      message: "Error creating logo category",
-      error: error.message,
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
     });
   }
 };
-
 // ✅ Get All Logo Categories
 // Translation function using Google Translate API
 async function translateToHindi(text) {
@@ -1159,21 +1222,50 @@ export const getAllLogoCategoriesForAdmin = async (req, res) => {
 };
 
 
-// ✅ Update Logo Category
 export const updateLogoCategory = async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
 
+    const category = await LogoCategory.findById(id);
+
+    if (!category) {
+      return res.status(404).json({
+        success: false,
+        message: "Category not found"
+      });
+    }
+
     const updateData = { name };
-    
-    // If new image is uploaded
+
+    const uploadDir = path.join(__dirname, "../uploads/logo-category");
+
+    // 🔥 update image
     if (req.files && req.files.image) {
       const file = req.files.image;
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "logo-category-images",
-      });
-      updateData.image = result.secure_url;
+
+      // delete old file
+      if (category.image) {
+        const oldFilePath = path.join(
+          __dirname,
+          "../uploads/logo-category",
+          category.image.split("/").pop()
+        );
+
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
+      }
+
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const ext = path.extname(file.name);
+
+      const fileName = `logo_cat_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      updateData.image = `https://api.editezy.com/uploads/logo-category/${fileName}`;
     }
 
     const updatedCategory = await LogoCategory.findByIdAndUpdate(
@@ -1182,19 +1274,19 @@ export const updateLogoCategory = async (req, res) => {
       { new: true }
     );
 
-    if (!updatedCategory) {
-      return res.status(404).json({ message: "Category not found" });
-    }
+    return res.status(200).json(updatedCategory);
 
-    res.status(200).json(updatedCategory);
   } catch (error) {
-    console.error("Error updating category:", error);
-    res.status(500).json({
-      message: "Error updating category",
-      error: error.message,
+    console.error("❌ Update Logo Category Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
     });
   }
 };
+
 
 // ✅ Delete Logo Category
 export const deleteLogoCategory = async (req, res) => {
@@ -1224,81 +1316,114 @@ export const deleteLogoCategory = async (req, res) => {
 
 export const createReel = async (req, res) => {
   try {
-    // Check if video is provided
+    console.log("🎥 Reel upload started");
+
     if (!req.files || !req.files.video) {
-      return res.status(400).json({ message: "Reel video is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Reel video is required"
+      });
     }
 
     const { hotTop } = req.body;
     const videoFile = req.files.video;
-    const thumbnailFile = req.files.thumbnail; // Optional thumbnail
+    const thumbnailFile = req.files.thumbnail;
 
-    // Upload video to Cloudinary with overlay
-    const videoResult = await cloudinary.uploader.upload(videoFile.tempFilePath, {
-      folder: "reels-videos",
-      resource_type: "video",
-      transformation: [
-        {
-          overlay: {
-            font_family: "Arial",
-            font_size: 28,
-            font_weight: "bold",
-            text: "EDITEZY",
-          },
-          gravity: "south_east",
-          x: 12,
-          y: 12,
-          color: "#ffffff",
-          opacity: 35,
-        },
-      ],
-    });
+    // 1️⃣ Validate video type
+    const validVideoTypes = [
+      "video/mp4",
+      "video/webm",
+      "video/quicktime",
+      "video/x-msvideo",
+      "video/3gpp"
+    ];
 
-    let thumbnailUrl = null;
-    
-    // Upload thumbnail if provided
-    if (thumbnailFile) {
-      const thumbnailResult = await cloudinary.uploader.upload(thumbnailFile.tempFilePath, {
-        folder: "reels-thumbnails",
-        resource_type: "image",
+    if (!validVideoTypes.includes(videoFile.mimetype)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid video format"
       });
-      thumbnailUrl = thumbnailResult.secure_url;
     }
 
-    // Create Reel document
-    const newReel = new Reel({
-      videoUrl: videoResult.secure_url,
-      thumbnailUrl: thumbnailUrl, // Will be null if not provided
+    // 2️⃣ Upload directory
+    const uploadDir = path.join(__dirname, "../uploads/reels");
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+    // 3️⃣ Save video
+    const videoExt = path.extname(videoFile.name);
+    const videoName = `reel_${uniqueSuffix}${videoExt}`;
+    const videoPath = path.join(uploadDir, videoName);
+
+    await videoFile.mv(videoPath);
+    console.log("✅ Video saved");
+
+    // 4️⃣ Save thumbnail (optional)
+    let thumbUrl = null;
+
+    if (thumbnailFile) {
+      const validImg = ["image/jpeg", "image/png", "image/webp"];
+
+      if (validImg.includes(thumbnailFile.mimetype)) {
+        const thumbExt = path.extname(thumbnailFile.name);
+        const thumbName = `thumb_${uniqueSuffix}${thumbExt}`;
+        const thumbPath = path.join(uploadDir, thumbName);
+
+        await thumbnailFile.mv(thumbPath);
+        thumbUrl = `/uploads/reels/${thumbName}`;
+      }
+    }
+
+    // 5️⃣ BASE URL CHANGE HERE 👇
+    const baseUrl = "https://api.editezy.com";
+
+    const videoUrl = `${baseUrl}/uploads/reels/${videoName}`;
+    const finalThumb = thumbUrl ? `${baseUrl}${thumbUrl}` : null;
+
+    // 6️⃣ Save DB
+    const reel = new Reel({
+      videoUrl,
+      thumbnailUrl: finalThumb,
       likeCount: 0,
       isLiked: false,
-      hotTop: hotTop === "true" || hotTop === true,
+      hotTop: hotTop === "true" || hotTop === true
     });
 
-    const savedReel = await newReel.save();
+    await reel.save();
 
-    // Notify all users about the new reel
-    const allUsers = await User.find({}, "_id");
-    const notifications = allUsers.map(user => ({
-      userId: user._id,
+    // 7️⃣ Notify users
+    const users = await User.find({}, "_id");
+
+    const notifications = users.map(u => ({
+      userId: u._id,
       title: "New Reel Added",
-      message: `A new reel has been uploaded. Check it out!`,
+      message: "New reel uploaded, check it now!"
     }));
 
     if (notifications.length > 0) {
       await Notification.insertMany(notifications);
     }
 
-    res.status(201).json({
-      message: "Reel created successfully and all users notified.",
-      reel: savedReel
+    // 8️⃣ Response
+    return res.status(201).json({
+      success: true,
+      message: "Reel created successfully",
+      reel
     });
 
   } catch (error) {
-    console.error("Error creating reel:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("❌ Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
-
 
 
 export const getAllReels = async (req, res) => {
@@ -1322,63 +1447,70 @@ export const updateReel = async (req, res) => {
 
     const reel = await Reel.findById(reelId);
     if (!reel) {
-      return res.status(404).json({ message: "Reel not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Reel not found"
+      });
     }
 
-    // Handle video update
+    const uploadDir = path.join(__dirname, "../uploads/reels");
+
+    // 🔥 UPDATE VIDEO
     if (req.files && req.files.video) {
       const videoFile = req.files.video;
 
-      // Delete old video from Cloudinary
+      // delete old file
       if (reel.videoUrl) {
-        const publicId = reel.videoUrl.split("/").slice(-1)[0].split(".")[0];
-        await cloudinary.uploader.destroy(`reels-videos/${publicId}`, { resource_type: "video" });
+        const oldVideoPath = path.join(
+          __dirname,
+          "../uploads/reels",
+          reel.videoUrl.split("/").pop()
+        );
+
+        if (fs.existsSync(oldVideoPath)) {
+          fs.unlinkSync(oldVideoPath);
+        }
       }
 
-      // Upload new video
-      const videoResult = await cloudinary.uploader.upload(videoFile.tempFilePath, {
-        folder: "reels-videos",
-        resource_type: "video",
-        transformation: [
-          {
-            overlay: {
-              font_family: "Arial",
-              font_size: 28,
-              font_weight: "bold",
-              text: "EDITEZY",
-            },
-            gravity: "south_east",
-            x: 12,
-            y: 12,
-            color: "#ffffff",
-            opacity: 35,
-          },
-        ],
-      });
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const videoExt = path.extname(videoFile.name);
 
-      reel.videoUrl = videoResult.secure_url;
+      const videoName = `reel_${uniqueSuffix}${videoExt}`;
+      const videoPath = path.join(uploadDir, videoName);
+
+      await videoFile.mv(videoPath);
+
+      reel.videoUrl = `https://api.editezy.com/uploads/reels/${videoName}`;
     }
 
-    // Handle thumbnail update
+    // 🔥 UPDATE THUMBNAIL
     if (req.files && req.files.thumbnail) {
-      const thumbnailFile = req.files.thumbnail;
+      const thumbFile = req.files.thumbnail;
 
-      // Delete old thumbnail from Cloudinary if it exists
       if (reel.thumbnailUrl) {
-        const publicId = reel.thumbnailUrl.split("/").slice(-1)[0].split(".")[0];
-        await cloudinary.uploader.destroy(`reels-thumbnails/${publicId}`, { resource_type: "image" });
+        const oldThumbPath = path.join(
+          __dirname,
+          "../uploads/reels",
+          reel.thumbnailUrl.split("/").pop()
+        );
+
+        if (fs.existsSync(oldThumbPath)) {
+          fs.unlinkSync(oldThumbPath);
+        }
       }
 
-      // Upload new thumbnail
-      const thumbnailResult = await cloudinary.uploader.upload(thumbnailFile.tempFilePath, {
-        folder: "reels-thumbnails",
-        resource_type: "image",
-      });
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const thumbExt = path.extname(thumbFile.name);
 
-      reel.thumbnailUrl = thumbnailResult.secure_url;
+      const thumbName = `thumb_${uniqueSuffix}${thumbExt}`;
+      const thumbPath = path.join(uploadDir, thumbName);
+
+      await thumbFile.mv(thumbPath);
+
+      reel.thumbnailUrl = `https://api.editezy.com/uploads/reels/${thumbName}`;
     }
 
-    // Optional fields update
+    // 🔥 OPTIONAL FIELDS
     if (req.body.likeCount !== undefined) {
       reel.likeCount = req.body.likeCount;
     }
@@ -1393,14 +1525,19 @@ export const updateReel = async (req, res) => {
 
     const updatedReel = await reel.save();
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Reel updated successfully",
-      reel: updatedReel,
+      reel: updatedReel
     });
 
   } catch (error) {
-    console.error("Error updating reel:", error);
-    res.status(500).json({ message: error.message });
+    console.error("❌ Update Reel Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
 
@@ -1425,42 +1562,58 @@ export const deleteReel = async (req, res) => {
 
 
 
-// 1. Create Audio
 export const createAudio = async (req, res) => {
   try {
     if (!req.files || !req.files.audio) {
-      return res.status(400).json({ message: "Audio file is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Audio file is required."
+      });
     }
 
     const file = req.files.audio;
 
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: "audios",
-      resource_type: "auto",
-    });
+    // upload folder
+    const uploadDir = path.join(__dirname, "../uploads/audios");
 
-    // Create audio duration (Cloudinary returns duration in seconds)
-    const duration = result.duration || 0;
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const ext = path.extname(file.name);
+
+    const fileName = `audio_${uniqueSuffix}${ext}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    await file.mv(filePath);
+
+    const audioUrl = `https://api.editezy.com/uploads/audios/${fileName}`;
 
     const newAudio = new Audio({
-      audioUrl: result.secure_url,
+      audioUrl,
       title: req.body.title || "",
       artist: req.body.artist || "",
-      duration: duration,
-      size: result.bytes || 0,
-      format: result.format || ""
+      duration: 0, // local me auto detect nahi hota (optional ffmpeg se kar sakte hain)
+      size: file.size || 0,
+      format: ext.replace(".", "")
     });
 
     await newAudio.save();
 
-    res.status(201).json({
+    return res.status(201).json({
+      success: true,
       message: "Audio uploaded successfully",
       audio: newAudio
     });
-    
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("❌ Create Audio Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
 
@@ -1478,46 +1631,51 @@ export const getAllAudios = async (req, res) => {
   }
 };
 
-// 3. Update Audio
 export const updateAudio = async (req, res) => {
   try {
     const { audioId } = req.params;
 
     const audio = await Audio.findById(audioId);
     if (!audio) {
-      return res.status(404).json({ message: "Audio not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Audio not found"
+      });
     }
 
-    // If new audio file is uploaded
+    const uploadDir = path.join(__dirname, "../uploads/audios");
+
+    // 🔥 UPDATE AUDIO FILE
     if (req.files && req.files.audio) {
       const file = req.files.audio;
 
-      // Delete old audio from Cloudinary
+      // delete old file
       if (audio.audioUrl) {
-        const publicId = audio.audioUrl
-          .split("/")
-          .slice(-1)[0]
-          .split(".")[0];
-
-        await cloudinary.uploader.destroy(
-          `audios/${publicId}`,
-          { resource_type: "auto" }
+        const oldFilePath = path.join(
+          __dirname,
+          "../uploads/audios",
+          audio.audioUrl.split("/").pop()
         );
+
+        if (fs.existsSync(oldFilePath)) {
+          fs.unlinkSync(oldFilePath);
+        }
       }
 
-      // Upload new audio
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "audios",
-        resource_type: "auto",
-      });
+      const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+      const ext = path.extname(file.name);
 
-      audio.audioUrl = result.secure_url;
-      audio.duration = result.duration || 0;
-      audio.size = result.bytes || 0;
-      audio.format = result.format || "";
+      const fileName = `audio_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      audio.audioUrl = `https://api.editezy.com/uploads/audios/${fileName}`;
+      audio.size = file.size || 0;
+      audio.format = ext.replace(".", "");
     }
 
-    // Update text fields
+    // 🔥 UPDATE TEXT FIELDS
     if (req.body.title !== undefined) {
       audio.title = req.body.title;
     }
@@ -1528,13 +1686,19 @@ export const updateAudio = async (req, res) => {
 
     const updatedAudio = await audio.save();
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Audio updated successfully",
-      audio: updatedAudio,
+      audio: updatedAudio
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("❌ Update Audio Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
 
@@ -1569,40 +1733,67 @@ export const createStickerCategory = async (req, res) => {
     const { name } = req.body;
 
     if (!name) {
-      return res.status(400).json({ message: "Category name is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Category name is required"
+      });
     }
 
     if (!req.files || !req.files.image) {
-      return res.status(400).json({ message: "Category image is required." });
+      return res.status(400).json({
+        success: false,
+        message: "Category image is required"
+      });
     }
 
     const file = req.files.image;
 
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: "sticker-category-images",
-    });
+    // 📁 folder
+    const uploadDir = path.join(__dirname, "../uploads/sticker-category");
 
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const uniqueSuffix =
+      Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+    const ext = path.extname(file.name);
+
+    const fileName = `sticker_cat_${uniqueSuffix}${ext}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    // 💾 save file
+    await file.mv(filePath);
+
+    const imageUrl = `https://api.editezy.com/uploads/sticker-category/${fileName}`;
+
+    // 🧠 create category
     const newCategory = await StickerCategory.create({
       name,
-      image: result.secure_url,
+      image: imageUrl
     });
 
     return res.status(201).json({
       success: true,
       message: "Sticker category created successfully",
-      category: newCategory,
+      category: newCategory
     });
 
   } catch (error) {
-    console.error("Error creating sticker category:", error);
+    console.error("❌ Sticker Category Error:", error);
 
     if (error.code === 11000) {
-      return res.status(400).json({ message: "Category already exists." });
+      return res.status(400).json({
+        success: false,
+        message: "Category already exists"
+      });
     }
 
     return res.status(500).json({
-      message: "Error creating sticker category",
-      error: error.message,
+      success: false,
+      message: "Server error",
+      error: error.message
     });
   }
 };
@@ -1665,24 +1856,50 @@ export const editStickerCategory = async (req, res) => {
     if (!category) {
       return res.status(404).json({
         success: false,
-        message: "Sticker category not found",
+        message: "Sticker category not found"
       });
     }
 
-    // update name if provided
+    // 📝 update name
     if (name) {
       category.name = name;
     }
 
-    // update image if provided
+    // 📁 folder
+    const uploadDir = path.join(__dirname, "../uploads/sticker-category");
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // 🖼️ update image
     if (req.files && req.files.image) {
       const file = req.files.image;
 
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "sticker-category-images",
-      });
+      // delete old image
+      if (category.image) {
+        const oldPath = path.join(
+          __dirname,
+          "../uploads/sticker-category",
+          category.image.split("/").pop()
+        );
 
-      category.image = result.secure_url;
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
+
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+      const ext = path.extname(file.name);
+
+      const fileName = `sticker_cat_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      category.image = `https://api.editezy.com/uploads/sticker-category/${fileName}`;
     }
 
     const updatedCategory = await category.save();
@@ -1690,20 +1907,19 @@ export const editStickerCategory = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Sticker category updated successfully",
-      category: updatedCategory,
+      category: updatedCategory
     });
 
   } catch (error) {
-    console.error("Error updating sticker category:", error);
+    console.error("❌ Sticker Category Update Error:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Error updating sticker category",
-      error: error.message,
+      message: "Server error",
+      error: error.message
     });
   }
 };
-
 
 export const deleteStickerCategory = async (req, res) => {
   try {
@@ -1742,35 +1958,63 @@ export const createSticker = async (req, res) => {
     const { stickerCategoryId } = req.body;
 
     if (!stickerCategoryId) {
-      return res.status(400).json({ message: "stickerCategoryId is required" });
+      return res.status(400).json({
+        success: false,
+        message: "stickerCategoryId is required"
+      });
     }
 
     if (!req.files || !req.files.image) {
-      return res.status(400).json({ message: "Sticker image is required" });
+      return res.status(400).json({
+        success: false,
+        message: "Sticker image is required"
+      });
     }
 
     const file = req.files.image;
 
-    const result = await cloudinary.uploader.upload(file.tempFilePath, {
-      folder: "stickers",
-    });
+    // 📁 folder
+    const uploadDir = path.join(__dirname, "../uploads/stickers");
 
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const uniqueSuffix =
+      Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+    const ext = path.extname(file.name);
+
+    const fileName = `sticker_${uniqueSuffix}${ext}`;
+    const filePath = path.join(uploadDir, fileName);
+
+    // 💾 save file
+    await file.mv(filePath);
+
+    const imageUrl = `https://api.editezy.com/uploads/stickers/${fileName}`;
+
+    // 🧠 save DB
     const newSticker = new Sticker({
       stickerCategoryId,
-      image: result.secure_url,
+      image: imageUrl
     });
 
     const saved = await newSticker.save();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Sticker created successfully",
-      sticker: saved,
+      sticker: saved
     });
 
   } catch (error) {
-    console.error("Create Sticker Error:", error);
-    res.status(500).json({ message: "Error creating sticker", error: error.message });
+    console.error("❌ Create Sticker Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
 
@@ -1804,40 +2048,69 @@ export const updateSticker = async (req, res) => {
     const { stickerCategoryId } = req.body;
 
     const sticker = await Sticker.findById(id);
+
     if (!sticker) {
-      return res.status(404).json({ message: "Sticker not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Sticker not found"
+      });
     }
 
-    // Update category if provided
+    // 📝 update category
     if (stickerCategoryId) {
       sticker.stickerCategoryId = stickerCategoryId;
     }
 
-    // Update image if new one uploaded
+    const uploadDir = path.join(__dirname, "../uploads/stickers");
+
+    // 🖼️ update image
     if (req.files && req.files.image) {
       const file = req.files.image;
 
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "stickers",
-      });
+      // delete old image
+      if (sticker.image) {
+        const oldPath = path.join(
+          __dirname,
+          "../uploads/stickers",
+          sticker.image.split("/").pop()
+        );
 
-      sticker.image = result.secure_url;
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      }
+
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+      const ext = path.extname(file.name);
+
+      const fileName = `sticker_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      sticker.image = `https://api.editezy.com/uploads/stickers/${fileName}`;
     }
 
     const updated = await sticker.save();
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Sticker updated successfully",
-      sticker: updated,
+      sticker: updated
     });
 
   } catch (error) {
-    console.error("Update Sticker Error:", error);
-    res.status(500).json({ message: "Error updating sticker", error: error.message });
+    console.error("❌ Update Sticker Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message
+    });
   }
 };
-
 // ==========================
 // DELETE STICKER
 // ==========================
@@ -2091,7 +2364,128 @@ export const deleteAmount = async (req, res) => {
 };
 
 
-// Create Business Card
+// // Create Business Card
+// export const createBusinessCard = async (req, res) => {
+//   try {
+//     const {
+//       name,
+//       title,
+//       company,
+//       email,
+//       phone,
+//       address,
+//       website,
+//       socialLinks,
+//       textStyles,
+//       logoSettings,
+//       design,
+//       useTemplate
+//     } = req.body;
+
+//     // Validation
+//     if (!name || !title) {
+//       return res.status(400).json({ 
+//         success: false, 
+//         message: "Name and title are required" 
+//       });
+//     }
+
+//     // Parse JSON strings if they come as strings
+//     const parseIfString = (data) => {
+//       if (typeof data === 'string') {
+//         try {
+//           return JSON.parse(data);
+//         } catch (e) {
+//           return data;
+//         }
+//       }
+//       return data;
+//     };
+
+//     const parsedSocialLinks = parseIfString(socialLinks);
+//     const parsedTextStyles = parseIfString(textStyles);
+//     const parsedLogoSettings = parseIfString(logoSettings);
+//     const parsedDesign = parseIfString(design);
+
+//     // Upload logo if present
+//     let logoUrl = '';
+//     if (req.files && req.files.logo) {
+//       const logoFile = req.files.logo;
+//       const logoResult = await cloudinary.uploader.upload(logoFile.tempFilePath, {
+//         folder: "business-cards/logos",
+//       });
+//       logoUrl = logoResult.secure_url;
+//     }
+
+//     // Upload QR code if present
+//     let qrCodeUrl = '';
+//     if (req.files && req.files.qrCode) {
+//       const qrFile = req.files.qrCode;
+//       const qrResult = await cloudinary.uploader.upload(qrFile.tempFilePath, {
+//         folder: "business-cards/qrcodes",
+//       });
+//       qrCodeUrl = qrResult.secure_url;
+//     }
+
+//     // Upload TEMPLATE image (without any overlay - just background)
+//     let templateUrl = '';
+//     if (req.files && req.files.templateImage) {
+//       const templateFile = req.files.templateImage;
+//       const templateResult = await cloudinary.uploader.upload(templateFile.tempFilePath, {
+//         folder: "business-cards/templates",
+//       });
+//       templateUrl = templateResult.secure_url;
+//     }
+
+//     // Upload PREVIEW image (with all overlays - final card)
+//     let previewUrl = '';
+//     if (req.files && req.files.previewImage) {
+//       const previewFile = req.files.previewImage;
+//       const previewResult = await cloudinary.uploader.upload(previewFile.tempFilePath, {
+//         folder: "business-cards/previews",
+//       });
+//       previewUrl = previewResult.secure_url;
+//     }
+
+//     // Create business card
+//     const businessCard = new BusinessCard({
+//       name,
+//       title,
+//       company: company || '',
+//       email: email || '',
+//       phone: phone || '',
+//       address: address || '',
+//       website: website || '',
+//       logo: logoUrl,
+//       qrCode: qrCodeUrl,
+//       templateImage: templateUrl,    // 👈 Background template without overlay
+//       previewImage: previewUrl,       // 👈 Final card with all overlays
+//       logoSettings: parsedLogoSettings,
+//       textStyles: parsedTextStyles,
+//       socialLinks: parsedSocialLinks || [],
+//       design: parsedDesign,
+//       useTemplate: useTemplate === 'true'
+//     });
+
+//     const savedCard = await businessCard.save();
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Business card created successfully",
+//       data: savedCard
+//     });
+
+//   } catch (error) {
+//     console.error("Error creating business card:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Error creating business card",
+//       error: error.message
+//     });
+//   }
+// };
+
+
 export const createBusinessCard = async (req, res) => {
   try {
     const {
@@ -2109,17 +2503,15 @@ export const createBusinessCard = async (req, res) => {
       useTemplate
     } = req.body;
 
-    // Validation
     if (!name || !title) {
-      return res.status(400).json({ 
-        success: false, 
-        message: "Name and title are required" 
+      return res.status(400).json({
+        success: false,
+        message: "Name and title are required"
       });
     }
 
-    // Parse JSON strings if they come as strings
     const parseIfString = (data) => {
-      if (typeof data === 'string') {
+      if (typeof data === "string") {
         try {
           return JSON.parse(data);
         } catch (e) {
@@ -2134,77 +2526,81 @@ export const createBusinessCard = async (req, res) => {
     const parsedLogoSettings = parseIfString(logoSettings);
     const parsedDesign = parseIfString(design);
 
-    // Upload logo if present
-    let logoUrl = '';
+    // 📁 folders
+    const uploadDir = path.join(__dirname, "../uploads/business-cards");
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    const baseUrl = "https://api.editezy.com";
+
+    const saveFile = async (file, prefix) => {
+      if (!file) return "";
+
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
+
+      const ext = path.extname(file.name);
+      const fileName = `${prefix}_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      return `${baseUrl}/uploads/business-cards/${fileName}`;
+    };
+
+    // 🔥 uploads (same structure as Cloudinary version)
+    let logoUrl = "";
     if (req.files && req.files.logo) {
-      const logoFile = req.files.logo;
-      const logoResult = await cloudinary.uploader.upload(logoFile.tempFilePath, {
-        folder: "business-cards/logos",
-      });
-      logoUrl = logoResult.secure_url;
+      logoUrl = await saveFile(req.files.logo, "logo");
     }
 
-    // Upload QR code if present
-    let qrCodeUrl = '';
+    let qrCodeUrl = "";
     if (req.files && req.files.qrCode) {
-      const qrFile = req.files.qrCode;
-      const qrResult = await cloudinary.uploader.upload(qrFile.tempFilePath, {
-        folder: "business-cards/qrcodes",
-      });
-      qrCodeUrl = qrResult.secure_url;
+      qrCodeUrl = await saveFile(req.files.qrCode, "qr");
     }
 
-    // Upload TEMPLATE image (without any overlay - just background)
-    let templateUrl = '';
+    let templateUrl = "";
     if (req.files && req.files.templateImage) {
-      const templateFile = req.files.templateImage;
-      const templateResult = await cloudinary.uploader.upload(templateFile.tempFilePath, {
-        folder: "business-cards/templates",
-      });
-      templateUrl = templateResult.secure_url;
+      templateUrl = await saveFile(req.files.templateImage, "template");
     }
 
-    // Upload PREVIEW image (with all overlays - final card)
-    let previewUrl = '';
+    let previewUrl = "";
     if (req.files && req.files.previewImage) {
-      const previewFile = req.files.previewImage;
-      const previewResult = await cloudinary.uploader.upload(previewFile.tempFilePath, {
-        folder: "business-cards/previews",
-      });
-      previewUrl = previewResult.secure_url;
+      previewUrl = await saveFile(req.files.previewImage, "preview");
     }
 
-    // Create business card
+    // 🧠 Create Business Card (NO CHANGE IN STRUCTURE)
     const businessCard = new BusinessCard({
       name,
       title,
-      company: company || '',
-      email: email || '',
-      phone: phone || '',
-      address: address || '',
-      website: website || '',
+      company: company || "",
+      email: email || "",
+      phone: phone || "",
+      address: address || "",
+      website: website || "",
       logo: logoUrl,
       qrCode: qrCodeUrl,
-      templateImage: templateUrl,    // 👈 Background template without overlay
-      previewImage: previewUrl,       // 👈 Final card with all overlays
+      templateImage: templateUrl,
+      previewImage: previewUrl,
       logoSettings: parsedLogoSettings,
       textStyles: parsedTextStyles,
       socialLinks: parsedSocialLinks || [],
       design: parsedDesign,
-      useTemplate: useTemplate === 'true'
+      useTemplate: useTemplate === "true"
     });
 
     const savedCard = await businessCard.save();
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Business card created successfully",
       data: savedCard
     });
 
   } catch (error) {
-    console.error("Error creating business card:", error);
-    res.status(500).json({
+    console.error("❌ Business Card Error:", error);
+    return res.status(500).json({
       success: false,
       message: "Error creating business card",
       error: error.message
@@ -2214,23 +2610,98 @@ export const createBusinessCard = async (req, res) => {
 
 
 
-// celebrationController.js - Fixed
+// // celebrationController.js - Fixed
+// export const createCelebration = async (req, res) => {
+//   try {
+//     let videoUrl = "";
+
+//     if (req.files && req.files.video) {
+//       const file = req.files.video;
+
+//       // ✅ detect file type
+//       const isGif = file.mimetype === "image/gif";
+
+//       const result = await cloudinary.uploader.upload(file.tempFilePath, {
+//         folder: "celebrations",
+//         resource_type: isGif ? "image" : "video",
+//       });
+
+//       videoUrl = result.secure_url;
+//     }
+
+//     const {
+//       enabled,
+//       duration_seconds,
+//       loop,
+//       gradient_colors,
+//       section_bg_color,
+//       primary_text_color,
+//       secondary_text_color,
+//       accent_color,
+//     } = req.body;
+
+//     // ✅ Parse gradient_colors if it's a string
+//     let parsedGradientColors = gradient_colors;
+//     if (typeof gradient_colors === 'string') {
+//       try {
+//         parsedGradientColors = JSON.parse(gradient_colors);
+//       } catch(e) {
+//         parsedGradientColors = ['#FF6B6B', '#4ECDC4'];
+//       }
+//     }
+
+//     const celebration = await Celebration.create({
+//       enabled,
+//       video_url: videoUrl,
+//       duration_seconds,
+//       loop,
+//       gradient_colors: parsedGradientColors, // ✅ Store as array, not string
+//       section_bg_color,
+//       primary_text_color,
+//       secondary_text_color,
+//       accent_color,
+//     });
+
+//     res.status(201).json({
+//       success: true,
+//       message: "Celebration created successfully",
+//       data: celebration,
+//     });
+
+//   } catch (error) {
+//     console.error("Create Celebration Error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message,
+//     });
+//   }
+// };
+
+
 export const createCelebration = async (req, res) => {
   try {
     let videoUrl = "";
 
+    const uploadDir = path.join(__dirname, "../uploads/celebrations");
+
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // 🎥 upload video/gif
     if (req.files && req.files.video) {
       const file = req.files.video;
 
-      // ✅ detect file type
-      const isGif = file.mimetype === "image/gif";
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
 
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "celebrations",
-        resource_type: isGif ? "image" : "video",
-      });
+      const ext = path.extname(file.name);
+      const fileName = `celebration_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
 
-      videoUrl = result.secure_url;
+      await file.mv(filePath);
+
+      videoUrl = `https://api.editezy.com/uploads/celebrations/${fileName}`;
     }
 
     const {
@@ -2241,42 +2712,45 @@ export const createCelebration = async (req, res) => {
       section_bg_color,
       primary_text_color,
       secondary_text_color,
-      accent_color,
+      accent_color
     } = req.body;
 
-    // ✅ Parse gradient_colors if it's a string
+    // 🧠 parse gradient colors (same logic)
     let parsedGradientColors = gradient_colors;
-    if (typeof gradient_colors === 'string') {
+
+    if (typeof gradient_colors === "string") {
       try {
         parsedGradientColors = JSON.parse(gradient_colors);
-      } catch(e) {
-        parsedGradientColors = ['#FF6B6B', '#4ECDC4'];
+      } catch (e) {
+        parsedGradientColors = ["#FF6B6B", "#4ECDC4"];
       }
     }
 
+    // 💾 save DB
     const celebration = await Celebration.create({
       enabled,
       video_url: videoUrl,
       duration_seconds,
       loop,
-      gradient_colors: parsedGradientColors, // ✅ Store as array, not string
+      gradient_colors: parsedGradientColors,
       section_bg_color,
       primary_text_color,
       secondary_text_color,
-      accent_color,
+      accent_color
     });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Celebration created successfully",
-      data: celebration,
+      data: celebration
     });
 
   } catch (error) {
-    console.error("Create Celebration Error:", error);
-    res.status(500).json({
+    console.error("❌ Create Celebration Error:", error);
+
+    return res.status(500).json({
       success: false,
-      message: error.message,
+      message: error.message
     });
   }
 };
@@ -2327,36 +2801,45 @@ export const getAllCelebrations = async (req, res) => {
   }
 };
 
-// ✅ UPDATE
-// ✅ UPDATE CELEBRATION - Fixed
 export const updateCelebration = async (req, res) => {
   try {
     const { id } = req.params;
 
     let updateData = { ...req.body };
 
-    // ✅ Parse gradient_colors if it's a string
-    if (updateData.gradient_colors && typeof updateData.gradient_colors === 'string') {
+    // 🧠 parse gradient_colors safely
+    if (
+      updateData.gradient_colors &&
+      typeof updateData.gradient_colors === "string"
+    ) {
       try {
-        updateData.gradient_colors = JSON.parse(updateData.gradient_colors);
-      } catch(e) {
-        updateData.gradient_colors = ['#FF6B6B', '#4ECDC4'];
+        updateData.gradient_colors = JSON.parse(
+          updateData.gradient_colors
+        );
+      } catch (e) {
+        updateData.gradient_colors = ["#FF6B6B", "#4ECDC4"];
       }
     }
 
-    // ✅ अगर नया video आया
+    const uploadDir = path.join(__dirname, "../uploads/celebrations");
+
+    // 🎥 update video/gif if provided
     if (req.files && req.files.video) {
       const file = req.files.video;
-      const isGif = file.mimetype === "image/gif";
 
-      const result = await cloudinary.uploader.upload(file.tempFilePath, {
-        folder: "celebrations",
-        resource_type: isGif ? "image" : "video",
-      });
+      const uniqueSuffix =
+        Date.now() + "-" + Math.round(Math.random() * 1e9);
 
-      updateData.video_url = result.secure_url;
+      const ext = path.extname(file.name);
+      const fileName = `celebration_${uniqueSuffix}${ext}`;
+      const filePath = path.join(uploadDir, fileName);
+
+      await file.mv(filePath);
+
+      updateData.video_url = `https://api.editezy.com/uploads/celebrations/${fileName}`;
     }
 
+    // 💾 update DB
     const updated = await Celebration.findByIdAndUpdate(
       id,
       updateData,
@@ -2366,24 +2849,26 @@ export const updateCelebration = async (req, res) => {
     if (!updated) {
       return res.status(404).json({
         success: false,
-        message: "Celebration not found",
+        message: "Celebration not found"
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Updated successfully",
-      data: updated,
+      data: updated
     });
 
   } catch (error) {
-    console.error("Update Celebration Error:", error);
-    res.status(500).json({
+    console.error("❌ Update Celebration Error:", error);
+
+    return res.status(500).json({
       success: false,
-      message: error.message,
+      message: error.message
     });
   }
 };
+
 
 // ✅ DELETE
 export const deleteCelebration = async (req, res) => {
