@@ -34,12 +34,12 @@ import * as cheerio from 'cheerio';
 import UserHistory from '../Models/UserHistory.js';
 import Reel from '../Models/Reel.js';
 import fetch from "node-fetch";
-import {
-  Observer,
-  Body,
-  Equator,
-  SearchRiseSet
-} from "astronomy-engine";
+// import {
+//   Observer,
+//   Body,
+//   Equator,
+//   SearchRiseSet
+// } from "astronomy-engine";
 import admin from 'firebase-admin';
 import Chat from '../Models/Chat.js';
 import Notification from '../Models/Notification.js';
@@ -56,6 +56,8 @@ import BusinessCardPayment from '../Models/BusinessCardPayment.js';
 
 import { fileURLToPath } from "url";
 
+import * as astronomy from "astronomy-engine";
+const { Observer, Body, Equator, SearchRiseSet } = astronomy;
 
 dayjs.extend(customParseFormat);
 
