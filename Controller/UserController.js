@@ -287,7 +287,7 @@ export const registerUser = async (req, res) => {
 
 // Direct Twilio credentials
 const TWILIO_SID = 'ACd37d269a71fda78661c1fd2a54a5b567';
-const TWILIO_AUTH_TOKEN = '3cd2ccdaa501ea57a0a1b2cb563da05c';
+const TWILIO_AUTH_TOKEN = 'b7d8bb75966044540261ad9670b83548';
 const TWILIO_PHONE = '+16193309459'; // Your Twilio phone number
 
 

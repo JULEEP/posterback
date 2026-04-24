@@ -54,6 +54,7 @@ const posterSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  isTrending: { type: Boolean, default: false },
   textSettings: {
     type: mongoose.Schema.Types.Mixed,  // To store the JSON for text settings
     default: {}

@@ -66,7 +66,8 @@ app.use(cors({
     'http://31.97.206.144:8059',
     'https://dreamtoday.in',
     'https://admin.dreamtoday.in',
-    'http://82.29.162.67:3079'
+    'http://82.29.162.67:3079',
+    'http://31.97.228.17:3097'
   ],
   methods: ['GET','POST','PUT','DELETE','OPTIONS'],
   credentials: true

@@ -387,6 +387,74 @@ export const getAllPosters = async (req, res) => {
 };
 
 
+
+export const getTrendingPosters = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    let lang = "en";
+
+    if (userId) {
+      const user = await User.findById(userId).select("language");
+      if (user) lang = user.language || "en";
+    }
+
+    // ✅ only trending posters
+    let posters = await Poster.find({ isTrending: true }).sort({ createdAt: -1 });
+
+    let translationMap = {};
+
+    if (lang === "hi") {
+      const textsToTranslate = [];
+
+      posters.forEach(p => {
+        if (p.categoryName) textsToTranslate.push(p.categoryName);
+        if (p.name && p.name.trim() !== "") textsToTranslate.push(p.name);
+      });
+
+      translationMap = await translateToHindiBulk(textsToTranslate);
+    }
+
+    posters = posters.map(p => {
+      const obj = p.toObject();
+
+      // translation
+      if (lang === "hi") {
+        if (obj.categoryName)
+          obj.categoryName = translationMap[obj.categoryName] || obj.categoryName;
+
+        if (obj.name && obj.name.trim() !== "")
+          obj.name = translationMap[obj.name] || obj.name;
+      }
+
+      const designData = obj.designData || {};
+
+      const cleanDesignData = {
+        bgImage: designData.bgImage || null,
+        overlayImages: designData.overlayImages || []
+      };
+
+      // remove unwanted root field
+      delete obj.overlaySettings;
+
+      return {
+        ...obj,
+        designData: cleanDesignData,
+        images: obj.posterImage?.url ? [obj.posterImage.url] : []
+      };
+    });
+
+    return res.status(200).json(posters);
+
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      message: "Error fetching trending posters",
+      error: error.message
+    });
+  }
+};
+
 export const getAllPostersForAdmin = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -1040,6 +1108,181 @@ const generatePreviewImage = async (bgUrl, overlayUrls = [], overlaySettings = {
 
 
 
+// export const canvasCreatePoster = async (req, res) => {
+//   try {
+//     const {
+//       name,
+//       categoryName,
+//       festivalDate,
+//       description,
+//       tags,
+//       email,
+//       mobile,
+//       title,
+//       designData,
+//       posterlang,
+//       isTrending = false   // 👈 add this line
+//     } = req.body;
+
+//     if (!req.files || !req.files.posterImage) {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Poster image is required"
+//       });
+//     }
+
+//     const parseIfString = (data) => {
+//       if (typeof data === "string") {
+//         try {
+//           return JSON.parse(data);
+//         } catch (e) {
+//           return data;
+//         }
+//       }
+//       return data;
+//     };
+
+//     const designDataParsed = parseIfString(designData);
+
+//     const baseUrl = "https://api.editezy.com";
+
+//     const uploadDir = path.join(__dirname, "../uploads/posters");
+//     const bgDir = path.join(uploadDir, "bg");
+//     const overlayDir = path.join(uploadDir, "overlay");
+
+//     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+//     if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true });
+//     if (!fs.existsSync(overlayDir)) fs.mkdirSync(overlayDir, { recursive: true });
+
+//     // =========================
+//     // 🎨 MAIN POSTER IMAGE
+//     // =========================
+//     const posterFile = req.files.posterImage;
+
+//     const posterName =
+//       "poster_" + Date.now() + "-" + Math.round(Math.random() * 1e9) + path.extname(posterFile.name);
+
+//     const posterPath = path.join(uploadDir, posterName);
+
+//     await posterFile.mv(posterPath);
+
+//     const posterUpload = {
+//       url: `${baseUrl}/uploads/posters/${posterName}`,
+//       publicId: posterName
+//     };
+
+//     // =========================
+//     // 🖼 BG IMAGE
+//     // =========================
+//     let bgImageData = null;
+
+//     if (req.files.bgImage) {
+//       const bgFile = req.files.bgImage;
+
+//       const bgName =
+//         "bg_" + Date.now() + "-" + Math.round(Math.random() * 1e9) + path.extname(bgFile.name);
+
+//       const bgPath = path.join(bgDir, bgName);
+
+//       await bgFile.mv(bgPath);
+
+//       bgImageData = {
+//         url: `${baseUrl}/uploads/posters/bg/${bgName}`,
+//         publicId: bgName
+//       };
+//     }
+
+//     // =========================
+//     // 🔺 OVERLAY IMAGES
+//     // =========================
+//     let overlayImagesData = [];
+
+//     if (req.files.overlayImages) {
+//       const overlayFiles = Array.isArray(req.files.overlayImages)
+//         ? req.files.overlayImages
+//         : [req.files.overlayImages];
+
+//       for (const file of overlayFiles) {
+//         const overlayName =
+//           "overlay_" + Date.now() + "-" + Math.round(Math.random() * 1e9) + path.extname(file.name);
+
+//         const overlayPath = path.join(overlayDir, overlayName);
+
+//         await file.mv(overlayPath);
+
+//         overlayImagesData.push({
+//           url: `${baseUrl}/uploads/posters/overlay/${overlayName}`,
+//           publicId: overlayName
+//         });
+//       }
+//     }
+
+//     // =========================
+//     // 🧠 CREATE POSTER
+//     // =========================
+//     const newPoster = new Poster({
+//       name,
+//       categoryName,
+//       festivalDate: festivalDate || undefined,
+//       description: description || undefined,
+//       tags: tags ? tags.split(",").map(tag => tag.trim()) : [],
+//       email: email || undefined,
+//       mobile: mobile || undefined,
+//       title: title || undefined,
+//       posterlang,
+
+//       posterImage: posterUpload,
+
+//       designData: {
+//         bgImage: bgImageData,
+//         overlayImages: overlayImagesData,
+//         bgImageSettings: designDataParsed?.bgImageSettings || {},
+//         overlaySettings: designDataParsed?.overlaySettings || { overlays: [] },
+//         textSettings: designDataParsed?.textSettings || {},
+//         textStyles: designDataParsed?.textStyles || {},
+//         textVisibility: designDataParsed?.textVisibility || {},
+//         overlayImageFilters: designDataParsed?.overlayImageFilters || [],
+//         posterlang,
+//         isTrending: isTrending === true || isTrending === 'true',   // normalise boolean
+//       },
+
+//       createdAt: new Date(),
+//       updatedAt: new Date()
+//     });
+
+//     await newPoster.save();
+
+//     return res.status(201).json({
+//       success: true,
+//       message: "Poster created successfully",
+//       poster: {
+//         _id: newPoster._id,
+//         name: newPoster.name,
+//         categoryName: newPoster.categoryName,
+//         festivalDate: newPoster.festivalDate,
+//         description: newPoster.description,
+//         tags: newPoster.tags,
+//         email: newPoster.email,
+//         mobile: newPoster.mobile,
+//         title: newPoster.title,
+//         posterImage: newPoster.posterImage.url,
+//         posterlang: newPoster.posterlang,
+//         createdAt: newPoster.createdAt
+//       }
+//     });
+
+//   } catch (error) {
+//     console.error("❌ Error creating poster:", error);
+//     return res.status(500).json({
+//       success: false,
+//       message: "Error creating poster",
+//       error: error.message
+//     });
+//   }
+// };
+
+
+
 export const canvasCreatePoster = async (req, res) => {
   try {
     const {
@@ -1052,7 +1295,8 @@ export const canvasCreatePoster = async (req, res) => {
       mobile,
       title,
       designData,
-      posterlang
+      posterlang,
+      isTrending = false
     } = req.body;
 
     if (!req.files || !req.files.posterImage) {
@@ -1148,6 +1392,9 @@ export const canvasCreatePoster = async (req, res) => {
       }
     }
 
+    // Normalise isTrending to boolean
+    const isTrendingBool = isTrending === true || isTrending === 'true';
+
     // =========================
     // 🧠 CREATE POSTER
     // =========================
@@ -1161,9 +1408,8 @@ export const canvasCreatePoster = async (req, res) => {
       mobile: mobile || undefined,
       title: title || undefined,
       posterlang,
-
+      isTrending: isTrendingBool,                // ✅ stored at root level
       posterImage: posterUpload,
-
       designData: {
         bgImage: bgImageData,
         overlayImages: overlayImagesData,
@@ -1173,8 +1419,8 @@ export const canvasCreatePoster = async (req, res) => {
         textStyles: designDataParsed?.textStyles || {},
         textVisibility: designDataParsed?.textVisibility || {},
         overlayImageFilters: designDataParsed?.overlayImageFilters || []
+        // ❌ removed duplicate posterlang and isTrending from here
       },
-
       createdAt: new Date(),
       updatedAt: new Date()
     });
@@ -1196,6 +1442,7 @@ export const canvasCreatePoster = async (req, res) => {
         title: newPoster.title,
         posterImage: newPoster.posterImage.url,
         posterlang: newPoster.posterlang,
+        isTrending: newPoster.isTrending,        // ✅ include in response
         createdAt: newPoster.createdAt
       }
     });

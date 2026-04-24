@@ -24,7 +24,8 @@ import {
   deleteBanner,
   getWeeklyPosters,
   removeTextFromImage,
-  getAllPostersForAdmin
+  getAllPostersForAdmin,
+  getTrendingPosters
 } from '../Controller/PosterController.js';
 import fileUpload from "express-fileupload";
 
@@ -35,6 +36,7 @@ router.post('/create-poster', createPoster);
 router.post('/create-canvaposter', canvasCreatePoster);
 router.put('/update/:id', updatePoster);
 router.get('/getallposter/:userId', getAllPosters); 
+router.get('/getalltrendingposter/:userId', getTrendingPosters); 
 router.get('/getallposter', getAllPostersForAdmin); 
 router.put('/editposter/:posterId', editPoster);
 router.delete('/deleteposter/:posterId', deletePoster);
