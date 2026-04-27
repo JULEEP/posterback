@@ -508,105 +508,91 @@ EDITEZY Team`,
 
 
 export const verifyOTP = async (req, res) => {
-  const { mobile, otp, fcmToken } = req.body; // ✅ fcmToken bhi body se le rahe
+  const { mobile, otp, fcmToken } = req.body;
 
   if (!mobile || !otp) {
-    const errorMsg = req.body?.language === 'hi' 
-      ? 'मोबाइल और ओटीपी आवश्यक है'
-      : 'Mobile and OTP are required';
-    return res.status(400).json({ error: errorMsg });
+    return res.status(400).json({
+      error: req.body?.language === 'hi'
+        ? 'मोबाइल और ओटीपी आवश्यक है'
+        : 'Mobile and OTP are required'
+    });
   }
 
   try {
-    let user = await User.findOne({ mobile });
+    const user = await User.findOne({ mobile });
 
     if (!user) {
-      const errorMsg = req.body?.language === 'hi'
-        ? 'उपयोगकर्ता नहीं मिला। कृपया पहले ओटीपी अनुरोध करें।'
-        : 'User not found. Please request OTP first.';
-      return res.status(404).json({ error: errorMsg });
+      return res.status(404).json({
+        error: req.body?.language === 'hi'
+          ? 'उपयोगकर्ता नहीं मिला'
+          : 'User not found'
+      });
     }
 
-    // Check user's language preference
     const userLanguage = user.language || 'en';
 
-    // Translate user name if language is Hindi
-    let displayUser = user.toObject ? user.toObject() : { ...user };
-    if (userLanguage === 'hi' && displayUser.name) {
-      displayUser.name = await translateToHindi(displayUser.name);
-    }
-
-    // Static OTP check for special numbers
+    // 🔥 STATIC OTP CHECK
     const staticOtpNumbers = ['9744037599', '9849008143'];
     if (staticOtpNumbers.includes(mobile) && otp === '1234') {
       user.isVerified = true;
       user.otp = null;
       user.otpExpiry = null;
-      
-      if (fcmToken) user.fcmToken = fcmToken; // ✅ Store fcmToken
+
+      if (fcmToken) user.fcmToken = fcmToken;
 
       await user.save();
 
-      const successMsg = userLanguage === 'hi'
-        ? 'ओटीपी सफलतापूर्वक सत्यापित हुआ'
-        : 'OTP verified successfully';
-
-      return res.status(200).json({ 
-        message: successMsg, 
-        user: displayUser // User with translated name if Hindi
+      return res.status(200).json({
+        message: userLanguage === 'hi'
+          ? 'ओटीपी सफलतापूर्वक सत्यापित हुआ'
+          : 'OTP verified successfully',
+        user
       });
     }
 
-    // Normal OTP validation
+    // 🔥 NORMAL OTP CHECK
     if (user.otp !== otp) {
-      const errorMsg = userLanguage === 'hi'
-        ? 'गलत ओटीपी'
-        : 'Invalid OTP';
-      return res.status(400).json({ error: errorMsg });
-    }
-    
-    if (user.otpExpiry < Date.now()) {
-      const errorMsg = userLanguage === 'hi'
-        ? 'ओटीपी की अवधि समाप्त हो गई है'
-        : 'OTP has expired';
-      return res.status(400).json({ error: errorMsg });
+      return res.status(400).json({
+        error: userLanguage === 'hi'
+          ? 'गलत ओटीपी'
+          : 'Invalid OTP'
+      });
     }
 
-    // OTP is valid: mark verified
+    if (user.otpExpiry < Date.now()) {
+      return res.status(400).json({
+        error: userLanguage === 'hi'
+          ? 'ओटीपी समाप्त हो गया है'
+          : 'OTP expired'
+      });
+    }
+
+    // ✅ VERIFY ONLY (NO SMS, NO SIDE EFFECT)
     user.isVerified = true;
     user.otp = null;
     user.otpExpiry = null;
-    
-    if (fcmToken) user.fcmToken = fcmToken; // ✅ Store fcmToken
+
+    if (fcmToken) user.fcmToken = fcmToken;
 
     await user.save();
 
-    // Update displayUser with latest data
-    displayUser = user.toObject ? user.toObject() : { ...user };
-    if (userLanguage === 'hi' && displayUser.name) {
-      displayUser.name = await translateToHindi(displayUser.name);
-    }
-
-    const successMsg = userLanguage === 'hi'
-      ? 'ओटीपी सफलतापूर्वक सत्यापित हुआ'
-      : 'OTP verified successfully';
-
-    res.status(200).json({ 
-      message: successMsg, 
-      user: displayUser // User with translated name if Hindi
+    return res.status(200).json({
+      message: userLanguage === 'hi'
+        ? 'ओटीपी सफलतापूर्वक सत्यापित हुआ'
+        : 'OTP verified successfully',
+      user
     });
 
   } catch (err) {
     console.error("OTP Verification Error:", err);
-    
-    const errorMsg = req.body?.language === 'hi'
-      ? 'सर्वर त्रुटि'
-      : 'Server error';
-      
-    res.status(500).json({ error: errorMsg });
+
+    return res.status(500).json({
+      error: req.body?.language === 'hi'
+        ? 'सर्वर त्रुटि'
+        : 'Server error'
+    });
   }
 };
-
 
 export const getOTP = async (req, res) => {
   const { mobile } = req.body; // ✅ Get mobile from request body

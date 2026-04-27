@@ -54,23 +54,26 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'http://194.164.148.244:3079',
-    'http://localhost:3002',
-    'https://ezystudio-zu8y.vercel.app',
-    'https://editezy.com',
-    'https://posternova.vercel.app',
-    'http://31.97.206.144:3065',
-    'http://31.97.206.144:8058',
-    'http://31.97.206.144:8059',
-    'https://dreamtoday.in',
-    'https://admin.dreamtoday.in',
-    'http://82.29.162.67:3079',
-    'http://31.97.228.17:3097'
-  ],
-  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
-  credentials: true
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'http://localhost:3000',
+      'https://ezystudio-zu8y.vercel.app',
+      'https://editezy.com',
+      'https://posternova.vercel.app',
+      'http://31.97.228.17:3097',
+      'https://admin.editezy.com',
+      'http://31.97.228.17:3097'
+    ];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  preflightContinue: false,
 }));
 
 app.options('*', cors());
